@@ -1,20 +1,25 @@
 {
-  "graph_name": "Job Search Workflow",
   "nodes": [
     {
       "id": "optimizer",
-      "function": "query_optimizer",
-      "params": { "max_words": 8 }
+      "type": "llm",
+      "prompt": "Create a search query searching for jobs which align with the resume description: {specifications}. Feedback: {critique}. Output only the query.",
+      "output_key": "current_search_query"
     },
     {
       "id": "searcher",
-      "function": "search_and_parse",
-      "params": { "max_results": 10 }
+      "type": "search_tool",
+      "input_key": "current_search_query",
+      "output_key": "job_listings"
     },
     {
       "id": "validator",
-      "function": "batch_validator",
-      "params": { "min_results_required": 5 }
+      "type": "llm_json",
+      "prompt": "Client description: {specifications}. Jobs: {job_listings}. Validate each job against the client description. Return JSON with 'passed_ids' (list) and 'feedback' (string).",
+      "output_mapping": {
+        "passed_ids": "valid_results",
+        "feedback": "critique"
+      }
     }
   ],
   "edges": [
@@ -24,11 +29,8 @@
   "conditional_edges": [
     {
       "source": "validator",
-      "condition_function": "check_completion",
-      "mapping": {
-        "continue": "optimizer",
-        "end": "END"
-      }
+      "condition": "len(state['valid_results']) < 5 and state['iterations'] < 3",
+      "mapping": { "true": "optimizer", "false": "END" }
     }
   ],
   "entry_point": "optimizer"

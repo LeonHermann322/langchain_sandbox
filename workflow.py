@@ -1,19 +1,17 @@
 import json
 import operator
-import time
-import random
 import re
-from typing import List, TypedDict, Annotated, Dict, Any, Callable
-
-from langchain_community.tools import DuckDuckGoSearchResults
+from typing import List, TypedDict, Annotated, Dict, Any
 from langchain_ollama import ChatOllama
+from langchain_community.tools import DuckDuckGoSearchResults
 from langgraph.graph import StateGraph, END
-from pytesseract import pytesseract
 from pdf2image import convert_from_path
+import pytesseract
 
-# --- Configuration & State ---
+pytesseract.pytesseract.tesseract_cmd = r"E:/Tesseract/tesseract.exe"
 
 
+# --- Standard State ---
 class AgentState(TypedDict):
     specifications: str
     current_search_query: str
@@ -23,168 +21,139 @@ class AgentState(TypedDict):
     iterations: int
 
 
-# Global LLM instance
-llm = ChatOllama(model="llama3.1", temperature=0)
-json_llm = llm.bind(format="json")
-search_tool = DuckDuckGoSearchResults()
-
-
-# --- Node Implementation Registry ---
-# This class contains the logic that the JSON refers to
-class NodeImplementations:
-    @staticmethod
-    def query_optimizer(state: AgentState, params: Dict):
-        prompt = f"""Target: {state['specifications']}
-        Feedback: {state.get('critique', 'None')}
-        Create a search query (max {params.get('max_words', 7)} words). No booleans. Single line output."""
-
-        response = llm.invoke(prompt).content.strip().replace('"', "")
-        # Basic sanitization
-        query = re.sub(r'[()"`]', "", response)
-        print(f"   [Optimizer] Query: {query}")
-        return {"current_search_query": query}
-
-    @staticmethod
-    def search_and_parse(state: AgentState, params: Dict):
-        query = state["current_search_query"]
-        raw_results = ""
-        try:
-            raw_results = search_tool.invoke(query)
-        except Exception as e:
-            print(f"   [Searcher] Error: {e}")
-
-        parsing_prompt = f"Extract jobs into JSON format (keys: title, url, snippet) from: {raw_results}"
-        try:
-            response = json_llm.invoke(parsing_prompt)
-            data = (
-                json.loads(response.content)
-                if isinstance(response.content, str)
-                else response.content
-            )
-            return {"job_listings": data.get("jobs", [])}
-        except:
-            return {"job_listings": []}
-
-    @staticmethod
-    def batch_validator(state: AgentState, params: Dict):
-        jobs_formatted = json.dumps(state["job_listings"])
-        prompt = f"""Criteria: {state['specifications']}
-        Jobs: {jobs_formatted}
-        Return JSON with 'passed_ids' (indices) and 'feedback'."""
-
-        try:
-            res = json_llm.invoke(prompt)
-            data = (
-                json.loads(res.content) if isinstance(res.content, str) else res.content
-            )
-            passed_ids = data.get("passed_ids", [])
-            valid = [
-                state["job_listings"][i]
-                for i in passed_ids
-                if i < len(state["job_listings"])
-            ]
-
-            print(
-                f"   [Validator] Found {len(valid)} valid jobs. Feedback: {data.get('feedback')}"
-            )
-            return {
-                "valid_results": valid,
-                "critique": data.get("feedback", ""),
-                "iterations": state["iterations"] + 1,
-                "job_listings": [],  # Clear buffer
-            }
-        except:
-            return {"iterations": state["iterations"] + 1}
-
-
-# --- Router Functions ---
-def check_completion(state: AgentState):
-    if len(state["valid_results"]) >= 5 or state["iterations"] >= 3:
-        return "end"
-    return "continue"
-
-
-# --- The Workflow Engine ---
-
-
-class WorkflowEngine:
+class GenericWorkflow:
     def __init__(self, config_path: str):
         with open(config_path, "r") as f:
             self.config = json.load(f)
-        self.nodes_registry = NodeImplementations()
-        self.router_registry = {"check_completion": check_completion}
+        self.llm = ChatOllama(model="llama3.1", temperature=0)
+        self.json_llm = self.llm.bind(format="json")
+        self.search_tool = DuckDuckGoSearchResults()
 
-    def _make_node_func(self, node_cfg: Dict) -> Callable:
-        """Wraps registry functions with their JSON parameters."""
-        func_name = node_cfg["function"]
-        params = node_cfg.get("params", {})
-        target_func = getattr(self.nodes_registry, func_name)
+    def _execute_node(self, node_cfg: Dict, state: AgentState):
+        print(f"--- Executing Node: {node_cfg['id']} ---")
+        node_type = node_cfg["type"]
 
-        def node_wrapper(state: AgentState):
-            return target_func(state, params)
+        # 1. Handle LLM Nodes (Text or JSON)
+        if node_type in ["llm", "llm_json"]:
+            prompt = node_cfg["prompt"].format(**state)
+            model = self.json_llm if node_type == "llm_json" else self.llm
+            response = model.invoke(prompt).content
 
-        return node_wrapper
+            if node_type == "llm_json":
+                data = json.loads(response) if isinstance(response, str) else response
+                # Map specific JSON keys to State keys
+                updates = {}
+                if "output_mapping" in node_cfg:
+                    for json_key, state_key in node_cfg["output_mapping"].items():
+                        val = data.get(json_key)
+                        # Special handling: if mapping to valid_results, filter the job_listings
+                        if state_key == "valid_results":
+                            updates[state_key] = [
+                                state["job_listings"][i]
+                                for i in val
+                                if i < len(state["job_listings"])
+                            ]
+                        else:
+                            updates[state_key] = val
+                updates["iterations"] = state["iterations"] + 1
+                return updates
+            else:
+                return {node_cfg["output_key"]: response.strip().replace('"', "")}
 
-    def build(self):
-        workflow = StateGraph(AgentState)
+        # 2. Handle Search Tool
+        if node_type == "search_tool":
+            query = state[node_cfg["input_key"]]
+            # Simple clean-up of query
+            query = re.sub(r'[()"`]', "", query)
+            raw_results = self.search_tool.invoke(query)
 
-        # 1. Add Nodes
-        for node_cfg in self.config["nodes"]:
-            workflow.add_node(node_cfg["id"], self._make_node_func(node_cfg))
+            # Auto-parse search results to a list of dicts (Internal Mini-LLM call for structure)
+            parse_prompt = f"Convert this text to a JSON list of jobs (title, url, snippet): {raw_results}"
+            parsed = self.json_llm.invoke(parse_prompt).content
+            jobs = (
+                json.loads(parsed).get("jobs", [])
+                if isinstance(parsed, str)
+                else parsed.get("jobs", [])
+            )
+            return {node_cfg["output_key"]: jobs}
 
-        # 2. Add Static Edges
+    def _build_condition(self, condition_cfg: Dict):
+        def condition_func(state: AgentState):
+            # Evaluate the string condition from JSON safely
+            result = eval(condition_cfg["condition"], {"state": state, "len": len})
+            return "true" if result else "false"
+
+        return condition_func
+
+    def compile(self):
+        builder = StateGraph(AgentState)
+
+        for n in self.config["nodes"]:
+            builder.add_node(
+                n["id"], lambda state, cfg=n: self._execute_node(cfg, state)
+            )
+
         for source, target in self.config["edges"]:
-            workflow.add_edge(source, target)
+            builder.add_edge(source, target)
 
-        # 3. Add Conditional Edges
-        for c_edge in self.config["conditional_edges"]:
-            condition_func = self.router_registry[c_edge["condition_function"]]
-            # Map "END" string to the actual constant
-            mapping = {
-                k: (END if v == "END" else v) for k, v in c_edge["mapping"].items()
-            }
+        for ce in self.config["conditional_edges"]:
+            mapping = {k: (END if v == "END" else v) for k, v in ce["mapping"].items()}
+            builder.add_conditional_edges(
+                ce["source"], self._build_condition(ce), mapping
+            )
 
-            workflow.add_conditional_edges(c_edge["source"], condition_func, mapping)
-
-        workflow.set_entry_point(self.config["entry_point"])
-        return workflow.compile()
+        builder.set_entry_point(self.config["entry_point"])
+        return builder.compile()
 
 
-# --- OCR Helper (Standalone) ---
+def doc_ocr(file_path: str, job_location: str) -> str:
+    # 1. Convert each PDF page to an image, then OCR it
+    resume_text = ""
+    try:
+        # poppler_path is required on Windows — install via:
+        # https://github.com/oschwartz10612/poppler-windows/releases
+        # then set the path below:
+        pages = convert_from_path(
+            file_path,
+            dpi=300,  # Higher DPI = better OCR accuracy
+            poppler_path=r"E:/Poppler/poppler-25.12.0/Library/bin",  # ← adjust to your install path
+        )
 
+        for i, page_image in enumerate(pages):
+            page_text = pytesseract.image_to_string(page_image, lang="eng")
+            resume_text += page_text + "\n"
 
-def perform_ocr(file_path, location):
-    # (Existing OCR logic from your code here...)
-    # Simplified for brevity:
-    print(f"Processing resume for location: {location}...")
-    return f"Junior AI Developer roles in {location} with Python and LLM skills."
+    except Exception as e:
+        print(f"   ERROR during OCR: {e}")
+        return "Junior AI Engineer or Junior Machine Learning Engineer roles in Berlin or Remote."
 
+    # 2. Guard: confirm we got meaningful content
+    resume_text = resume_text.strip()
+    if not resume_text or len(resume_text) < 100:
+        print(f"   ERROR: OCR extracted too little text ({len(resume_text)} chars).")
+        return "Junior AI Engineer or Junior Machine Learning Engineer roles in Berlin or Remote."
 
-# --- Execution ---
+    print(f"   ✅ OCR extracted {len(resume_text)} characters from resume.")
+
 
 if __name__ == "__main__":
-    # 1. Setup Input
     RESUME_PATH = "C:/Users/lherm/Downloads/LeonHermannResume_clean.pdf"
     LOCATION = "Berlin"
 
-    specs = perform_ocr(RESUME_PATH, LOCATION)
+    specs = doc_ocr(RESUME_PATH, LOCATION)
+    workflow = GenericWorkflow("workflow.json")
+    app = workflow.compile()
 
-    # 2. Build Graph from JSON
-    # Assuming the JSON above is saved as 'workflow_config.json'
-    engine = WorkflowEngine("D:/langchain_sandbox/workflow.json")
-    app = engine.build()
+    results = app.invoke(
+        {
+            "specifications": specs,
+            "job_listings": [],
+            "valid_results": [],
+            "critique": "None",
+            "iterations": 0,
+        }
+    )
 
-    # 3. Run
-    initial_state = {
-        "specifications": specs,
-        "job_listings": [],
-        "valid_results": [],
-        "critique": "None",
-        "iterations": 0,
-    }
-
-    final_state = app.invoke(initial_state)
-
-    print("\n--- FINAL RESULTS ---")
-    for job in final_state["valid_results"]:
-        print(f"Title: {job['title']} | URL: {job['url']}")
+    print(f"\nFound {len(results['valid_results'])} jobs.")
+    for j in results["valid_results"]:
+        print(f"- {j['title']} ({j['url']})")
