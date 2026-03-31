@@ -1,0 +1,35 @@
+{
+  "graph_name": "Job Search Workflow",
+  "nodes": [
+    {
+      "id": "optimizer",
+      "function": "query_optimizer",
+      "params": { "max_words": 8 }
+    },
+    {
+      "id": "searcher",
+      "function": "search_and_parse",
+      "params": { "max_results": 10 }
+    },
+    {
+      "id": "validator",
+      "function": "batch_validator",
+      "params": { "min_results_required": 5 }
+    }
+  ],
+  "edges": [
+    ["optimizer", "searcher"],
+    ["searcher", "validator"]
+  ],
+  "conditional_edges": [
+    {
+      "source": "validator",
+      "condition_function": "check_completion",
+      "mapping": {
+        "continue": "optimizer",
+        "end": "END"
+      }
+    }
+  ],
+  "entry_point": "optimizer"
+}
