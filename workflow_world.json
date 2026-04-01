@@ -26,7 +26,7 @@
       "id": "world_qa",
       "type": "llm_json",
       "temperature": 0.1,
-      "prompt": "You are a strict quality assurance agent for narrative consistency.\n\nInitial specification:\n{world_specification}\n\nCandidate world:\n{detailed_world}\n\nEvaluate whether the candidate world is aligned with the initial specification, coherent, and sufficiently detailed.\n\nAcceptance criteria:\n1. Faithful to specification constraints and tone.\n2. Internal logic is coherent (physics/rules/social systems are not contradictory).\n3. Detailed enough to support character creation.\n\nOutput JSON only:\n{{\"world_qa_ok\": true/false, \"world_qa_feedback\": \"concise corrective feedback if rejected, otherwise short approval note\"}}",
+      "prompt": "You are a strict but practical QA agent for narrative consistency.\n\nInitial specification:\n{world_specification}\n\nCandidate world:\n{detailed_world}\n\nEvaluate alignment and coherence.\n\nDecision policy:\n- Set world_qa_ok = false ONLY for hard failures (major contradiction with specification, broken world logic, or insufficient detail to create characters).\n- If issues are minor or polish-level, set world_qa_ok = true and provide a short improvement note.\n\nOutput JSON only:\n{{\"world_qa_ok\": true/false, \"world_qa_feedback\": \"brief actionable note; if accepted, this is optional improvement guidance\"}}",
       "output_mapping": {
         "world_qa_ok": "world_qa_ok",
         "world_qa_feedback": "world_qa_feedback"
@@ -37,7 +37,7 @@
       "id": "character_builder",
       "type": "llm_json",
       "temperature": 0.9,
-      "prompt": "You are a creative character designer.\n\nWorld physics and setting:\n{detailed_world}\n\nExisting characters (avoid duplicates in role, origin, archetype, and core motivation):\n{characters}\n\nCurrent character QA feedback:\n{character_qa_feedback}\n\nTask:\nCreate exactly ONE new character that is distinct from existing characters and clearly grounded in this world.\n\nOutput JSON only:\n{{\"current_character\": {{\"name\":\"...\",\"role\":\"...\",\"origin\":\"...\",\"core_motivation\":\"...\",\"conflict\":\"...\",\"skills\": [\"...\"],\"flaws\":[\"...\"],\"world_link\":\"...\"}}}}",
+      "prompt": "You are a creative character designer.\n\nWorld physics and setting:\n{detailed_world}\n\nExisting characters (avoid duplicates in role, origin, archetype, and core motivation):\n{characters}\n\nCurrent character QA feedback:\n{character_qa_feedback}\n\nTask:\nCreate exactly ONE new character that is world-consistent AND creatively distinct.\n\nDiversity constraints:\n1. Avoid repeating role/archetype patterns from existing characters.\n2. Introduce at least one unusual but plausible trait (background, vocation blend, or worldview).\n3. Keep all abilities plausible for this world's technology and social systems.\n4. Use specific, concrete details rather than generic templates.\n\nOutput JSON only:\n{{\"current_character\": {{\"name\":\"...\",\"role\":\"...\",\"origin\":\"...\",\"core_motivation\":\"...\",\"conflict\":\"...\",\"skills\": [\"...\"],\"flaws\":[\"...\"],\"world_link\":\"...\"}}}}",
       "output_mapping": {
         "current_character": "current_character"
       },
@@ -47,7 +47,7 @@
       "id": "character_consistency_qa",
       "type": "llm_json",
       "temperature": 0.3,
-      "prompt": "You are a strict consistency QA agent.\n\nWorld:\n{detailed_world}\n\nExisting approved characters:\n{characters}\n\nCandidate character:\n{current_character}\n\nTask:\n1. Check if candidate is consistent with world physics and social context.\n2. Check if candidate is non-duplicate vs existing characters.\n3. If accepted, append candidate to the character list.\n4. If rejected, keep character list unchanged and provide corrective guidance.\n\nOutput JSON only:\n{{\"character_qa_ok\": true/false, \"character_qa_feedback\": \"...\", \"characters\": [...], \"character_count\": 0}}",
+      "prompt": "You are a consistency QA agent. Be strict on hard contradictions, but allow creative variation.\n\nWorld:\n{detailed_world}\n\nExisting approved characters:\n{characters}\n\nCandidate character:\n{current_character}\n\nDecision policy:\n- Reject ONLY if there is a hard contradiction with world physics/social rules OR a clear duplicate of an existing character.\n- Do NOT reject for minor style, wording, or debatable plausibility nitpicks.\n- Novel combinations are allowed if they are explainable within the world context.\n\nTask:\n1. Evaluate hard consistency and duplication.\n2. If accepted, append candidate to characters and increment character_count.\n3. If rejected, keep list unchanged and give concise corrective guidance focused on hard failures only.\n\nOutput JSON only:\n{{\"character_qa_ok\": true/false, \"character_qa_feedback\": \"...\", \"characters\": [...], \"character_count\": 0}}",
       "output_mapping": {
         "character_qa_ok": "character_qa_ok",
         "character_qa_feedback": "character_qa_feedback",
