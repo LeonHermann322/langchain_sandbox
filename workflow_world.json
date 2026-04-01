@@ -1,0 +1,82 @@
+{
+  "description": "General world-building workflow with creative and QA loops plus iterative character generation.",
+  "state_schema": {
+    "world_specification": "str",
+    "detailed_world": "str",
+    "world_qa_ok": "bool",
+    "world_qa_feedback": "str",
+    "characters": "list",
+    "current_character": "dict",
+    "character_qa_ok": "bool",
+    "character_qa_feedback": "str",
+    "character_count": "int",
+    "iterations": "int"
+  },
+  "entry_point": "world_builder",
+  "nodes": [
+    {
+      "id": "world_builder",
+      "type": "llm",
+      "temperature": 1.0,
+      "prompt": "You are a highly creative world-building agent.\n\nInitial specification:\n{world_specification}\n\nPrevious QA feedback:\n{world_qa_feedback}\n\nTask:\nCreate or refine an intricate world description that remains faithful to the initial specification. Expand details across geography, culture, governance, conflict, economy, technology or magic system, and daily life.\n\nReturn only the world description text.",
+      "output_key": "detailed_world",
+      "increment_iterations": true
+    },
+    {
+      "id": "world_qa",
+      "type": "llm_json",
+      "temperature": 0.1,
+      "prompt": "You are a strict quality assurance agent for narrative consistency.\n\nInitial specification:\n{world_specification}\n\nCandidate world:\n{detailed_world}\n\nEvaluate whether the candidate world is aligned with the initial specification, coherent, and sufficiently detailed.\n\nAcceptance criteria:\n1. Faithful to specification constraints and tone.\n2. Internal logic is coherent (physics/rules/social systems are not contradictory).\n3. Detailed enough to support character creation.\n\nOutput JSON only:\n{{\"world_qa_ok\": true/false, \"world_qa_feedback\": \"concise corrective feedback if rejected, otherwise short approval note\"}}",
+      "output_mapping": {
+        "world_qa_ok": "world_qa_ok",
+        "world_qa_feedback": "world_qa_feedback"
+      },
+      "increment_iterations": false
+    },
+    {
+      "id": "character_builder",
+      "type": "llm_json",
+      "temperature": 0.9,
+      "prompt": "You are a creative character designer.\n\nWorld physics and setting:\n{detailed_world}\n\nExisting characters (avoid duplicates in role, origin, archetype, and core motivation):\n{characters}\n\nCurrent character QA feedback:\n{character_qa_feedback}\n\nTask:\nCreate exactly ONE new character that is distinct from existing characters and clearly grounded in this world.\n\nOutput JSON only:\n{{\"current_character\": {{\"name\":\"...\",\"role\":\"...\",\"origin\":\"...\",\"core_motivation\":\"...\",\"conflict\":\"...\",\"skills\": [\"...\"],\"flaws\":[\"...\"],\"world_link\":\"...\"}}}}",
+      "output_mapping": {
+        "current_character": "current_character"
+      },
+      "increment_iterations": true
+    },
+    {
+      "id": "character_consistency_qa",
+      "type": "llm_json",
+      "temperature": 0.3,
+      "prompt": "You are a strict consistency QA agent.\n\nWorld:\n{detailed_world}\n\nExisting approved characters:\n{characters}\n\nCandidate character:\n{current_character}\n\nTask:\n1. Check if candidate is consistent with world physics and social context.\n2. Check if candidate is non-duplicate vs existing characters.\n3. If accepted, append candidate to the character list.\n4. If rejected, keep character list unchanged and provide corrective guidance.\n\nOutput JSON only:\n{{\"character_qa_ok\": true/false, \"character_qa_feedback\": \"...\", \"characters\": [...], \"character_count\": 0}}",
+      "output_mapping": {
+        "character_qa_ok": "character_qa_ok",
+        "character_qa_feedback": "character_qa_feedback",
+        "characters": "characters",
+        "character_count": "character_count"
+      },
+      "increment_iterations": false
+    }
+  ],
+  "edges": [
+    ["world_builder", "world_qa"],
+    ["character_builder", "character_consistency_qa"]
+  ],
+  "conditional_edges": [
+    {
+      "source": "world_qa",
+      "condition": "state['world_qa_ok'] == True or state['iterations'] >= 8",
+      "mapping": {
+        "true": "character_builder",
+        "false": "world_builder"
+      }
+    },
+    {
+      "source": "character_consistency_qa",
+      "condition": "state['character_count'] >= 5 or state['iterations'] >= 40",
+      "mapping": {
+        "true": "END",
+        "false": "character_builder"
+      }
+    }
+  ]
+}

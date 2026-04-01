@@ -1,35 +1,55 @@
 {
+  "description": "Job search workflow - generic configuration purely via JSON",
+  "state_schema": {
+    "specifications": "str",
+    "current_search_query": "str",
+    "job_listings": "list",
+    "job_listings_with_content": "list",
+    "valid_results": "list",
+    "critique": "str",
+    "search_quality_ok": "bool",
+    "search_quality_feedback": "str",
+    "link_validation_feedback": "str",
+    "resume_fit_feedback": "str",
+    "specificity_feedback": "str",
+    "link_valid_ids": "list",
+    "resume_fit_ids": "list",
+    "specific_offer_ids": "list",
+    "iterations": "int",
+    "location": "str"
+  },
   "entry_point": "query_generator",
   "nodes": [
     {
       "id": "query_generator",
       "type": "llm_json",
-      "prompt": "You are a job search machine. Location: BERLIN.\n\nCandidate: {specifications}\nPrevious Critique: {critique}\nSearch Quality Feedback: {search_quality_feedback}\nLink Validation Feedback: {link_validation_feedback}\nResume Fit Feedback: {resume_fit_feedback}\nPage Specificity Feedback: {specificity_feedback}\n\nTask: Generate ONE specific search query for the next iteration.\nRules:\n1. Expand titles: Use keywords like 'Graduate Machine Learning', 'Junior Data Scientist', 'Associate AI Engineer', or 'Junior Software Engineer AI'.\n2. Target specific posts: Include terms that favor direct openings such as 'inurl:jobs', 'inurl:job', 'inurl:career', 'inurl:position'.\n3. Site Filter: Rotate among 'site:boards.greenhouse.io', 'site:jobs.lever.co', and 'site:ashbyhq.com'.\n4. Apply all feedback: avoid invalid/dead links, avoid non-matching roles, avoid search/listing pages.\n5. Exclude repeated weak results using minus terms from critique.\n\nExample Output: {{\"query\": \"site:jobs.lever.co Berlin Junior Machine Learning Engineer inurl:job -intern -senior\"}}",
-      "increment_iterations": false,
+      "prompt": "You are a job search machine. Location: {location}.\n\nCandidate: {specifications}\nPrevious Critique: {critique}\nSearch Quality Feedback: {search_quality_feedback}\nLink Validation Feedback: {link_validation_feedback}\nResume Fit Feedback: {resume_fit_feedback}\nPage Specificity Feedback: {specificity_feedback}\n\nTask: Generate ONE practical search query for the next iteration.\nRules:\n1. Role terms: use junior/graduate synonyms (e.g., 'Graduate Machine Learning Engineer', 'Junior Data Scientist', 'Associate AI Engineer').\n2. Keep direct-posting intent using one path hint among: inurl:job, inurl:jobs, inurl:career, inurl:position.\n3. Rotate site filters among: site:boards.greenhouse.io, site:jobs.lever.co, site:ashbyhq.com.\n4. If previous round returned zero jobs, BROADEN instead of narrowing (remove excessive minus terms).\n5. NEVER add minus terms that exclude essential job path words: job, jobs, career, careers, apply, position.\n6. Only use 0-3 minus terms total, and only for clear mismatch (e.g., internship, senior, principal).\n7. Output only JSON with key 'query'.\n\nExample Output: {{\"query\": \"site:jobs.lever.co Berlin Junior Machine Learning Engineer inurl:job -intern -senior\"}}",
       "output_mapping": {
         "query": "current_search_query"
       }
     },
     {
       "id": "searcher",
-      "type": "search_tool",
+      "type": "llm_tool",
+      "tool": "web_search",
       "input_key": "current_search_query",
-      "parse_prompt": "Extract only ACTUAL job openings from these results into JSON.\nUse the feedback to rank/filter aggressively.\n\nFeedback to apply:\n- Search quality: {search_quality_feedback}\n- Link validation: {link_validation_feedback}\n- Resume fit: {resume_fit_feedback}\n- Page specificity: {specificity_feedback}\n\nReject content likely to be listing/search pages, stale pages, or irrelevant role families.\nRequired JSON format: {{\"jobs\": [{{\"title\": \"...\", \"url\": \"...\", \"snippet\": \"...\"}}]}}\n\nResults: {raw_results}",
-      "output_key": "job_listings"
+      "output_key": "job_listings",
+      "parse_prompt": "Extract only ACTUAL job openings from these search results into JSON.\n\nSTRICT URL RULES:\n1. Copy URLs EXACTLY from Results (no rewriting).\n2. NEVER invent URLs or domains.\n3. NEVER output placeholder domains such as example.com.\n4. If no valid direct opening URLs are present, return an empty list.\n\nQuality filters:\n- Prefer single job detail pages; reject search/listing/category pages.\n- Reject stale/closed content if obvious.\n- Keep relevance to junior/graduate AI/ML/data roles.\n\nReturn EXACT JSON format only:\n{{\"jobs\": [{{\"title\": \"...\", \"url\": \"...\", \"snippet\": \"...\"}}]}}\n\nResults: {raw_results}"
     },
     {
       "id": "search_quality_guard",
       "type": "llm_json",
       "prompt": "Search Quality Guard\n\nInput:\n- Current Query: {current_search_query}\n- Parsed job candidates: {job_listings}\n\nAssess if this search output is high enough quality to continue to scraping.\n\nQuality should be FALSE if any of these dominate:\n1. Placeholder/hallucinated domains (like example.com) or clearly synthetic URLs.\n2. Mostly duplicates or very low diversity.\n3. Too few viable direct job links to justify scraping.\n\nReturn JSON:\n- search_quality_ok: true/false\n- search_quality_feedback: concise tactical guidance for next query/search iteration.",
-      "increment_iterations": false,
       "output_mapping": {
         "search_quality_ok": "search_quality_ok",
         "search_quality_feedback": "search_quality_feedback"
-      }
+      },
+      "increment_iterations": false
     },
     {
       "id": "scraper",
-      "type": "web_scraper",
+      "type": "tool",
+      "tool": "web_scraper",
       "input_key": "job_listings",
       "output_key": "job_listings_with_content"
     },
@@ -37,40 +57,40 @@
       "id": "link_validator",
       "type": "llm_json",
       "prompt": "Task 1: Link & Vacancy Validator.\n\nInput:\n- Scraped Data: {job_listings_with_content}\n\nFor each item, decide if:\n1. The link appears reachable / not an obvious dead error page based on scraped content.\n2. The posting appears currently open (not clearly closed/expired/archived).\n\nReturn JSON:\n- passed_ids: list of indices that pass Task 1.\n- link_feedback: concise guidance for future search/query strategy focused on bad links or stale roles.",
-      "increment_iterations": false,
       "output_mapping": {
         "passed_ids": "link_valid_ids",
         "link_feedback": "link_validation_feedback"
-      }
+      },
+      "increment_iterations": false
     },
     {
       "id": "resume_fit_validator",
       "type": "llm_json",
       "prompt": "Task 2: Resume Fit Validator.\n\nInput:\n- Candidate Specs: {specifications}\n- Scraped Data: {job_listings_with_content}\n- Task 1 Feedback: {link_validation_feedback}\n\nEvaluate role fit against candidate profile (junior/graduate AI/ML/data orientation and location preference relevance).\n\nReturn JSON:\n- passed_ids: list of indices that pass Task 2.\n- fit_feedback: concise guidance for future query/search refinement when fit is poor.",
-      "increment_iterations": false,
       "output_mapping": {
         "passed_ids": "resume_fit_ids",
         "fit_feedback": "resume_fit_feedback"
-      }
+      },
+      "increment_iterations": false
     },
     {
       "id": "specificity_validator",
       "type": "llm_json",
       "prompt": "Task 3: Page Specificity Validator.\n\nInput:\n- Candidate Specs: {specifications}\n- Scraped Data: {job_listings_with_content}\n- Task 1 Feedback: {link_validation_feedback}\n- Task 2 Feedback: {resume_fit_feedback}\n\nGoal:\n1. Reject platform listing/search/category pages.\n2. Keep only single, concrete job-opening pages.\n3. Keep only postings that satisfy ALL three tasks conceptually (valid/open link, good resume fit, specific single opening).\n\nReturn JSON:\n- passed_ids: final list of indices that satisfy all criteria.\n- specificity_feedback: concise feedback for future query/search refinement about page-type quality.",
-      "increment_iterations": true,
       "output_mapping": {
         "passed_ids": "valid_results",
         "specificity_feedback": "specificity_feedback"
-      }
+      },
+      "increment_iterations": true
     },
     {
       "id": "feedback_aggregator",
       "type": "llm_json",
-      "prompt": "Aggregate feedback from all validators into one actionable critique for the next query iteration.\n\nInputs:\n- Search quality feedback: {search_quality_feedback}\n- Link feedback: {link_validation_feedback}\n- Resume fit feedback: {resume_fit_feedback}\n- Page specificity feedback: {specificity_feedback}\n\nReturn JSON:\n- critique: one concise string with exclusion hints (companies, domains, page patterns, role patterns).",
-      "increment_iterations": false,
+      "prompt": "Aggregate feedback from all validators into one actionable critique for the next query iteration.\n\nInputs:\n- Search quality feedback: {search_quality_feedback}\n- Link feedback: {link_validation_feedback}\n- Resume fit feedback: {resume_fit_feedback}\n- Page specificity feedback: {specificity_feedback}\n\nConstraints for critique:\n1. Give ONE concise critique string.\n2. Do NOT suggest excluding essential job-path tokens: job, jobs, career, careers, apply, position.\n3. Do NOT suggest excluding entire target domains (boards.greenhouse.io, jobs.lever.co, ashbyhq.com).\n4. Prefer role-level and mismatch-level exclusions (e.g., senior-only, internship-only, unrelated role families).\n\nReturn JSON:\n- critique: concise string.",
       "output_mapping": {
         "critique": "critique"
-      }
+      },
+      "increment_iterations": true
     }
   ],
   "edges": [

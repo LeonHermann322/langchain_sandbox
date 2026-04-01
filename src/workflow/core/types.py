@@ -1,9 +1,18 @@
 import operator
 from typing import Annotated, Any, Dict, List, TypedDict
 
+# Generic state type - can be used for any workflow
+GenericState = Dict[str, Any]
 
-class AgentState(TypedDict):
+
+# Shared workflow state schema (job + world-building)
+class AgentState(TypedDict, total=False):
+    # Common
+    iterations: int
+
+    # Job-search fields
     specifications: str
+    location: str
     current_search_query: str
     job_listings: List[dict]
     job_listings_with_content: List[dict]
@@ -17,7 +26,17 @@ class AgentState(TypedDict):
     link_valid_ids: List[int]
     resume_fit_ids: List[int]
     specific_offer_ids: List[int]
-    iterations: int
+
+    # World-building fields
+    world_specification: str
+    detailed_world: str
+    world_qa_ok: bool
+    world_qa_feedback: str
+    characters: List[dict]
+    current_character: Dict[str, Any]
+    character_qa_ok: bool
+    character_qa_feedback: str
+    character_count: int
 
 
 class NodeConfig(TypedDict, total=False):
@@ -25,6 +44,7 @@ class NodeConfig(TypedDict, total=False):
     type: str
     prompt: str
     parse_prompt: str
+    temperature: float
     output_key: str
     output_mapping: Dict[str, str]
     input_key: str

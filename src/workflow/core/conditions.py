@@ -31,20 +31,31 @@ class SafeConditionEvaluator:
             left = self._eval(node.left, state)
             for op, comparator in zip(node.ops, node.comparators):
                 right = self._eval(comparator, state)
-                if isinstance(op, ast.Lt):
-                    ok = left < right
-                elif isinstance(op, ast.LtE):
-                    ok = left <= right
-                elif isinstance(op, ast.Gt):
-                    ok = left > right
-                elif isinstance(op, ast.GtE):
-                    ok = left >= right
-                elif isinstance(op, ast.Eq):
-                    ok = left == right
-                elif isinstance(op, ast.NotEq):
-                    ok = left != right
+                # Treat None as a default value (False-y for comparisons)
+                if left is None or right is None:
+                    # None is treated as "falsy" for comparisons
+                    if isinstance(op, ast.Eq):
+                        ok = left == right
+                    elif isinstance(op, ast.NotEq):
+                        ok = left != right
+                    else:
+                        # For inequalities with None, treat as False
+                        return False
                 else:
-                    raise UnsafeExpressionError("Unsupported comparison operator")
+                    if isinstance(op, ast.Lt):
+                        ok = left < right
+                    elif isinstance(op, ast.LtE):
+                        ok = left <= right
+                    elif isinstance(op, ast.Gt):
+                        ok = left > right
+                    elif isinstance(op, ast.GtE):
+                        ok = left >= right
+                    elif isinstance(op, ast.Eq):
+                        ok = left == right
+                    elif isinstance(op, ast.NotEq):
+                        ok = left != right
+                    else:
+                        raise UnsafeExpressionError("Unsupported comparison operator")
                 if not ok:
                     return False
                 left = right
@@ -60,7 +71,21 @@ class SafeConditionEvaluator:
         if isinstance(node, ast.Subscript):
             value = self._eval(node.value, state)
             key = self._eval(node.slice, state)
+            # Handle missing keys gracefully
+            if isinstance(value, dict) and key not in value:
+                return None
             return value[key]
+
+        if isinstance(node, ast.Attribute):
+            # Support dict.get() method
+            obj = self._eval(node.value, state)
+            if node.attr == "get" and isinstance(obj, dict):
+                # Return a callable that supports .get(key, default)
+                def dict_get(key, default=None):
+                    return obj.get(key, default)
+
+                return dict_get
+            raise UnsafeExpressionError(f"Attribute access not allowed: {node.attr}")
 
         if isinstance(node, ast.Name):
             if node.id == "state":

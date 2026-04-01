@@ -1,10 +1,10 @@
-from .application.app import JobMatchingWorkflow, run_main
-from .core.types import AgentState
+from .workflow import GenericWorkflow
+from .core.types import AgentState, GenericState
 from .services.resume import ResumeExtractor
 
 __all__ = [
     "AgentState",
-    "JobMatchingWorkflow",
+    "GenericState",
+    "GenericWorkflow",
     "ResumeExtractor",
-    "run_main",
 ]
