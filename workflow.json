@@ -3,7 +3,7 @@
     {
       "id": "optimizer",
       "type": "llm",
-      "prompt": "Create a search query searching for jobs which align with the resume description: {specifications}. Feedback: {critique}. Output only the query.",
+      "prompt": "Create a search query searching for jobs which align with the resume description: {specifications}. Feedback: {critique}. Output only the query and nothing else.",
       "output_key": "current_search_query"
     },
     {

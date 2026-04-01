@@ -1,6 +1,8 @@
 import json
 import operator
 import re
+import os
+from datetime import datetime
 from typing import List, TypedDict, Annotated, Dict, Any
 from langchain_ollama import ChatOllama
 from langchain_community.tools import DuckDuckGoSearchResults
@@ -29,11 +31,18 @@ class GenericWorkflow:
         self.json_llm = self.llm.bind(format="json")
         self.search_tool = DuckDuckGoSearchResults()
 
-    def _execute_node(self, node_cfg: Dict, state: AgentState):
-        print(f"--- Executing Node: {node_cfg['id']} ---")
-        node_type = node_cfg["type"]
+        # Setup Logging Directory
+        self.log_dir = "workflow_logs"
+        os.makedirs(self.log_dir, exist_ok=True)
 
-        # 1. Handle LLM Nodes (Text or JSON)
+    def _execute_node(self, node_cfg: Dict, state: AgentState):
+        # Only print the active agent to command line
+        print(f"[*] Agent Running: {node_cfg['id']}")
+
+        node_type = node_cfg["type"]
+        updates = {}
+
+        # 1. Handle LLM Nodes
         if node_type in ["llm", "llm_json"]:
             prompt = node_cfg["prompt"].format(**state)
             model = self.json_llm if node_type == "llm_json" else self.llm
@@ -41,13 +50,12 @@ class GenericWorkflow:
 
             if node_type == "llm_json":
                 data = json.loads(response) if isinstance(response, str) else response
-                # Map specific JSON keys to State keys
-                updates = {}
                 if "output_mapping" in node_cfg:
                     for json_key, state_key in node_cfg["output_mapping"].items():
                         val = data.get(json_key)
-                        # Special handling: if mapping to valid_results, filter the job_listings
+                        print(val)
                         if state_key == "valid_results":
+                            print(len(state["job_listings"]))
                             updates[state_key] = [
                                 state["job_listings"][i]
                                 for i in val
@@ -56,18 +64,13 @@ class GenericWorkflow:
                         else:
                             updates[state_key] = val
                 updates["iterations"] = state["iterations"] + 1
-                return updates
             else:
-                return {node_cfg["output_key"]: response.strip().replace('"', "")}
+                updates[node_cfg["output_key"]] = response.strip().replace('"', "")
 
         # 2. Handle Search Tool
-        if node_type == "search_tool":
-            query = state[node_cfg["input_key"]]
-            # Simple clean-up of query
-            query = re.sub(r'[()"`]', "", query)
+        elif node_type == "search_tool":
+            query = re.sub(r'[()"`]', "", state[node_cfg["input_key"]])
             raw_results = self.search_tool.invoke(query)
-
-            # Auto-parse search results to a list of dicts (Internal Mini-LLM call for structure)
             parse_prompt = f"Convert this text to a JSON list of jobs (title, url, snippet): {raw_results}"
             parsed = self.json_llm.invoke(parse_prompt).content
             jobs = (
@@ -75,11 +78,21 @@ class GenericWorkflow:
                 if isinstance(parsed, str)
                 else parsed.get("jobs", [])
             )
-            return {node_cfg["output_key"]: jobs}
+            updates[node_cfg["output_key"]] = jobs
+
+        # --- LOGGING TO FILE ---
+        # Capture the full state after updates
+        full_current_state = {**state, **updates}
+        timestamp = datetime.now().strftime("%H-%M-%S_%f")
+        log_filename = f"step_{state['iterations']}_{node_cfg['id']}_{timestamp}.json"
+
+        with open(os.path.join(self.log_dir, log_filename), "w") as f:
+            json.dump(full_current_state, f, indent=4)
+
+        return updates
 
     def _build_condition(self, condition_cfg: Dict):
         def condition_func(state: AgentState):
-            # Evaluate the string condition from JSON safely
             result = eval(condition_cfg["condition"], {"state": state, "len": len})
             return "true" if result else "false"
 
@@ -87,53 +100,38 @@ class GenericWorkflow:
 
     def compile(self):
         builder = StateGraph(AgentState)
-
         for n in self.config["nodes"]:
             builder.add_node(
                 n["id"], lambda state, cfg=n: self._execute_node(cfg, state)
             )
-
         for source, target in self.config["edges"]:
             builder.add_edge(source, target)
-
         for ce in self.config["conditional_edges"]:
             mapping = {k: (END if v == "END" else v) for k, v in ce["mapping"].items()}
             builder.add_conditional_edges(
                 ce["source"], self._build_condition(ce), mapping
             )
-
         builder.set_entry_point(self.config["entry_point"])
         return builder.compile()
 
 
 def doc_ocr(file_path: str, job_location: str) -> str:
-    # 1. Convert each PDF page to an image, then OCR it
     resume_text = ""
     try:
-        # poppler_path is required on Windows — install via:
-        # https://github.com/oschwartz10612/poppler-windows/releases
-        # then set the path below:
         pages = convert_from_path(
-            file_path,
-            dpi=300,  # Higher DPI = better OCR accuracy
-            poppler_path=r"E:/Poppler/poppler-25.12.0/Library/bin",  # ← adjust to your install path
+            file_path, dpi=300, poppler_path=r"E:/Poppler/poppler-25.12.0/Library/bin"
         )
-
-        for i, page_image in enumerate(pages):
-            page_text = pytesseract.image_to_string(page_image, lang="eng")
-            resume_text += page_text + "\n"
-
+        for page_image in pages:
+            resume_text += pytesseract.image_to_string(page_image, lang="eng") + "\n"
     except Exception as e:
-        print(f"   ERROR during OCR: {e}")
-        return "Junior AI Engineer or Junior Machine Learning Engineer roles in Berlin or Remote."
+        return f"Junior AI Engineer in {job_location}"
 
-    # 2. Guard: confirm we got meaningful content
     resume_text = resume_text.strip()
     if not resume_text or len(resume_text) < 100:
-        print(f"   ERROR: OCR extracted too little text ({len(resume_text)} chars).")
-        return "Junior AI Engineer or Junior Machine Learning Engineer roles in Berlin or Remote."
+        return f"Junior AI Engineer in {job_location}"
 
-    print(f"   ✅ OCR extracted {len(resume_text)} characters from resume.")
+    print(f"✅ OCR Completed ({len(resume_text)} chars)")
+    return f"Junior AI roles in {job_location} for a candidate with these skills: {resume_text[:1000]}"
 
 
 if __name__ == "__main__":
@@ -154,6 +152,5 @@ if __name__ == "__main__":
         }
     )
 
-    print(f"\nFound {len(results['valid_results'])} jobs.")
-    for j in results["valid_results"]:
-        print(f"- {j['title']} ({j['url']})")
+    print(f"\nWorkflow Finished. Check 'workflow_logs' for details.")
+    print(f"Found {len(results['valid_results'])} jobs.")
