@@ -69,10 +69,19 @@ def run_main() -> None:
     results = workflow.run(
         {
             "specifications": specs,
+            "current_search_query": "",
             "job_listings": [],
             "job_listings_with_content": [],
             "valid_results": [],
             "critique": "None",
+            "search_quality_ok": True,
+            "search_quality_feedback": "No search-quality feedback yet.",
+            "link_validation_feedback": "No link validation feedback yet.",
+            "resume_fit_feedback": "No resume-fit feedback yet.",
+            "specificity_feedback": "No page-specificity feedback yet.",
+            "link_valid_ids": [],
+            "resume_fit_ids": [],
+            "specific_offer_ids": [],
             "iterations": 0,
         }
     )

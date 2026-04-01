@@ -4,7 +4,8 @@
     {
       "id": "query_generator",
       "type": "llm_json",
-      "prompt": "You are a job search machine. Location: BERLIN.\n\nCandidate: {specifications}\nPrevious Critique: {critique}\n\nTask: Generate ONE specific search query.\nRules:\n1. Expand titles: Use keywords like 'Graduate Machine Learning', 'Junior Data Scientist', 'Associate AI Engineer', or 'Junior Software Engineer AI'.\n2. Target specific posts: Add 'inurl:jobs' or 'inurl:render' to the query to find specific job descriptions rather than company homepages.\n3. Site Filter: Cycle between 'site:boards.greenhouse.io', 'site:jobs.lever.co', or 'site:ashbyhq.com'.\n4. Exclude: {critique} (Look at rejected companies and use the minus sign, e.g., -JetBrains).\n\nExample Output: {{\"query\": \"site:jobs.lever.co \\\"Berlin\\\" Graduate Machine Learning -JetBrains\"}}",
+      "prompt": "You are a job search machine. Location: BERLIN.\n\nCandidate: {specifications}\nPrevious Critique: {critique}\nSearch Quality Feedback: {search_quality_feedback}\nLink Validation Feedback: {link_validation_feedback}\nResume Fit Feedback: {resume_fit_feedback}\nPage Specificity Feedback: {specificity_feedback}\n\nTask: Generate ONE specific search query for the next iteration.\nRules:\n1. Expand titles: Use keywords like 'Graduate Machine Learning', 'Junior Data Scientist', 'Associate AI Engineer', or 'Junior Software Engineer AI'.\n2. Target specific posts: Include terms that favor direct openings such as 'inurl:jobs', 'inurl:job', 'inurl:career', 'inurl:position'.\n3. Site Filter: Rotate among 'site:boards.greenhouse.io', 'site:jobs.lever.co', and 'site:ashbyhq.com'.\n4. Apply all feedback: avoid invalid/dead links, avoid non-matching roles, avoid search/listing pages.\n5. Exclude repeated weak results using minus terms from critique.\n\nExample Output: {{\"query\": \"site:jobs.lever.co Berlin Junior Machine Learning Engineer inurl:job -intern -senior\"}}",
+      "increment_iterations": false,
       "output_mapping": {
         "query": "current_search_query"
       }
@@ -13,7 +14,18 @@
       "id": "searcher",
       "type": "search_tool",
       "input_key": "current_search_query",
+      "parse_prompt": "Extract only ACTUAL job openings from these results into JSON.\nUse the feedback to rank/filter aggressively.\n\nFeedback to apply:\n- Search quality: {search_quality_feedback}\n- Link validation: {link_validation_feedback}\n- Resume fit: {resume_fit_feedback}\n- Page specificity: {specificity_feedback}\n\nReject content likely to be listing/search pages, stale pages, or irrelevant role families.\nRequired JSON format: {{\"jobs\": [{{\"title\": \"...\", \"url\": \"...\", \"snippet\": \"...\"}}]}}\n\nResults: {raw_results}",
       "output_key": "job_listings"
+    },
+    {
+      "id": "search_quality_guard",
+      "type": "llm_json",
+      "prompt": "Search Quality Guard\n\nInput:\n- Current Query: {current_search_query}\n- Parsed job candidates: {job_listings}\n\nAssess if this search output is high enough quality to continue to scraping.\n\nQuality should be FALSE if any of these dominate:\n1. Placeholder/hallucinated domains (like example.com) or clearly synthetic URLs.\n2. Mostly duplicates or very low diversity.\n3. Too few viable direct job links to justify scraping.\n\nReturn JSON:\n- search_quality_ok: true/false\n- search_quality_feedback: concise tactical guidance for next query/search iteration.",
+      "increment_iterations": false,
+      "output_mapping": {
+        "search_quality_ok": "search_quality_ok",
+        "search_quality_feedback": "search_quality_feedback"
+      }
     },
     {
       "id": "scraper",
@@ -22,23 +34,64 @@
       "output_key": "job_listings_with_content"
     },
     {
-      "id": "validator",
+      "id": "link_validator",
       "type": "llm_json",
-      "prompt": "You are a recruitment gatekeeper. \n\nCandidate Specs: {specifications}\nScraped Data: {job_listings_with_content}\n\nCRITICAL EVALUATION RULES:\n1. LOCATION: If Berlin is listed as ONE of the locations (even if there are others like London or Amsterdam), this is a MATCH. Do not reject multi-location roles.\n2. ROLE: A 'Junior Data Scientist' or 'Machine Learning Engineer' is a match for this candidate's ML research background.\n3. CONTENT: If the scraped text is a 'List of Jobs' rather than a single job description, look for the most relevant title in that list. If a relevant Berlin title exists, mark it as passed.\n\nResponse Format (JSON):\n- passed_ids: List of indices.\n- critique: String listing companies seen/rejected to avoid repeats.\n\nExample: {{\"passed_ids\": [0], \"critique\": \"Found Freenow and JetBrains. JetBrains is a match because Berlin is listed.\"}}",
+      "prompt": "Task 1: Link & Vacancy Validator.\n\nInput:\n- Scraped Data: {job_listings_with_content}\n\nFor each item, decide if:\n1. The link appears reachable / not an obvious dead error page based on scraped content.\n2. The posting appears currently open (not clearly closed/expired/archived).\n\nReturn JSON:\n- passed_ids: list of indices that pass Task 1.\n- link_feedback: concise guidance for future search/query strategy focused on bad links or stale roles.",
+      "increment_iterations": false,
+      "output_mapping": {
+        "passed_ids": "link_valid_ids",
+        "link_feedback": "link_validation_feedback"
+      }
+    },
+    {
+      "id": "resume_fit_validator",
+      "type": "llm_json",
+      "prompt": "Task 2: Resume Fit Validator.\n\nInput:\n- Candidate Specs: {specifications}\n- Scraped Data: {job_listings_with_content}\n- Task 1 Feedback: {link_validation_feedback}\n\nEvaluate role fit against candidate profile (junior/graduate AI/ML/data orientation and location preference relevance).\n\nReturn JSON:\n- passed_ids: list of indices that pass Task 2.\n- fit_feedback: concise guidance for future query/search refinement when fit is poor.",
+      "increment_iterations": false,
+      "output_mapping": {
+        "passed_ids": "resume_fit_ids",
+        "fit_feedback": "resume_fit_feedback"
+      }
+    },
+    {
+      "id": "specificity_validator",
+      "type": "llm_json",
+      "prompt": "Task 3: Page Specificity Validator.\n\nInput:\n- Candidate Specs: {specifications}\n- Scraped Data: {job_listings_with_content}\n- Task 1 Feedback: {link_validation_feedback}\n- Task 2 Feedback: {resume_fit_feedback}\n\nGoal:\n1. Reject platform listing/search/category pages.\n2. Keep only single, concrete job-opening pages.\n3. Keep only postings that satisfy ALL three tasks conceptually (valid/open link, good resume fit, specific single opening).\n\nReturn JSON:\n- passed_ids: final list of indices that satisfy all criteria.\n- specificity_feedback: concise feedback for future query/search refinement about page-type quality.",
+      "increment_iterations": true,
       "output_mapping": {
         "passed_ids": "valid_results",
+        "specificity_feedback": "specificity_feedback"
+      }
+    },
+    {
+      "id": "feedback_aggregator",
+      "type": "llm_json",
+      "prompt": "Aggregate feedback from all validators into one actionable critique for the next query iteration.\n\nInputs:\n- Search quality feedback: {search_quality_feedback}\n- Link feedback: {link_validation_feedback}\n- Resume fit feedback: {resume_fit_feedback}\n- Page specificity feedback: {specificity_feedback}\n\nReturn JSON:\n- critique: one concise string with exclusion hints (companies, domains, page patterns, role patterns).",
+      "increment_iterations": false,
+      "output_mapping": {
         "critique": "critique"
       }
     }
   ],
   "edges": [
     ["query_generator", "searcher"],
-    ["searcher", "scraper"],
-    ["scraper", "validator"]
+    ["searcher", "search_quality_guard"],
+    ["scraper", "link_validator"],
+    ["link_validator", "resume_fit_validator"],
+    ["resume_fit_validator", "specificity_validator"],
+    ["specificity_validator", "feedback_aggregator"]
   ],
   "conditional_edges": [
     {
-      "source": "validator",
+      "source": "search_quality_guard",
+      "condition": "state['search_quality_ok'] == True",
+      "mapping": {
+        "true": "scraper",
+        "false": "feedback_aggregator"
+      }
+    },
+    {
+      "source": "feedback_aggregator",
       "condition": "len(state['valid_results']) < 5 and state['iterations'] < 12",
       "mapping": {
         "true": "query_generator",

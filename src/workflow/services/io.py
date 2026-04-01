@@ -33,14 +33,37 @@ class WorkflowIO:
         output_path = (
             Path(self.settings.results_dir) / f"verified_jobs_{timestamp}.json"
         )
+        filtered_results = self._filter_verified_results(
+            results.get("valid_results", [])
+        )
         final_output = {
             "search_metadata": {
                 "location": location,
                 "total_iterations": results["iterations"],
-                "jobs_found_count": len(results["valid_results"]),
+                "jobs_found_count": len(filtered_results),
             },
-            "verified_listings": results["valid_results"],
+            "verified_listings": filtered_results,
         }
         with open(output_path, "w", encoding="utf-8") as handle:
             json.dump(final_output, handle, indent=4)
         return str(output_path)
+
+    def _filter_verified_results(self, listings: list[dict]) -> list[dict]:
+        filtered: list[dict] = []
+        seen_urls: set[str] = set()
+
+        for listing in listings:
+            url = (listing.get("url") or "").strip()
+            content = (listing.get("page_content") or "").strip()
+
+            if not url or url in seen_urls:
+                continue
+            if url.startswith("https://www.example.com"):
+                continue
+            if content.lower().startswith("scrape error"):
+                continue
+
+            seen_urls.add(url)
+            filtered.append(listing)
+
+        return filtered

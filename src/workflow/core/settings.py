@@ -9,8 +9,10 @@ class WorkflowSettings:
     search_results_count: int = 20
     scrape_user_agent: str = "Mozilla/5.0"
     scrape_timeout_seconds: int = 8
+    scrape_retry_attempts: int = 2
     scrape_max_chars: int = 2500
     scrape_max_listings: int = 7
+    scrape_allow_insecure_tls_fallback: bool = True
     log_dir: str = "workflow_logs"
     results_dir: str = "results"
     tesseract_cmd: str = r"E:/Tesseract/tesseract.exe"
@@ -32,12 +34,20 @@ class WorkflowSettings:
             scrape_timeout_seconds=int(
                 os.getenv("WORKFLOW_SCRAPE_TIMEOUT", cls.scrape_timeout_seconds)
             ),
+            scrape_retry_attempts=int(
+                os.getenv("WORKFLOW_SCRAPE_RETRY_ATTEMPTS", cls.scrape_retry_attempts)
+            ),
             scrape_max_chars=int(
                 os.getenv("WORKFLOW_SCRAPE_MAX_CHARS", cls.scrape_max_chars)
             ),
             scrape_max_listings=int(
                 os.getenv("WORKFLOW_SCRAPE_MAX_LISTINGS", cls.scrape_max_listings)
             ),
+            scrape_allow_insecure_tls_fallback=os.getenv(
+                "WORKFLOW_SCRAPE_INSECURE_TLS_FALLBACK",
+                "true" if cls.scrape_allow_insecure_tls_fallback else "false",
+            ).lower()
+            in ("1", "true", "yes", "on"),
             log_dir=os.getenv("WORKFLOW_LOG_DIR", cls.log_dir),
             results_dir=os.getenv("WORKFLOW_RESULTS_DIR", cls.results_dir),
             tesseract_cmd=os.getenv("WORKFLOW_TESSERACT_CMD", cls.tesseract_cmd),

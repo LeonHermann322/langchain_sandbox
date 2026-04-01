@@ -9,6 +9,14 @@ class AgentState(TypedDict):
     job_listings_with_content: List[dict]
     valid_results: Annotated[List[dict], operator.add]
     critique: str
+    search_quality_ok: bool
+    search_quality_feedback: str
+    link_validation_feedback: str
+    resume_fit_feedback: str
+    specificity_feedback: str
+    link_valid_ids: List[int]
+    resume_fit_ids: List[int]
+    specific_offer_ids: List[int]
     iterations: int
 
 
@@ -16,9 +24,11 @@ class NodeConfig(TypedDict, total=False):
     id: str
     type: str
     prompt: str
+    parse_prompt: str
     output_key: str
     output_mapping: Dict[str, str]
     input_key: str
+    increment_iterations: bool
 
 
 class ConditionConfig(TypedDict):

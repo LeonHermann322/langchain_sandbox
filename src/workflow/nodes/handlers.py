@@ -1,6 +1,8 @@
 import json
 import re
+import time
 from typing import Any, Dict
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -39,7 +41,8 @@ class LLMNodeHandler:
                     value if value is not None else "No critique provided."
                 )
 
-        updates["iterations"] = state["iterations"] + 1
+        if node_cfg.get("increment_iterations", True):
+            updates["iterations"] = state["iterations"] + 1
         return updates
 
     def _extract_valid_items(self, value: Any, state: AgentState) -> list[dict]:
@@ -67,26 +70,66 @@ class SearchNodeHandler:
 
     def execute(self, node_cfg: NodeConfig, state: AgentState) -> StateUpdate:
         query = re.sub(r'[()"`]', "", state[node_cfg["input_key"]])
-        raw_results = self.search_tool.invoke(query)
-        parse_prompt = (
+
+        # Networked search can fail intermittently; retry briefly before fallback.
+        raw_results: Any = []
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                raw_results = self.search_tool.invoke(query)
+                break
+            except Exception as exc:
+                print(
+                    f"[!] Search attempt {attempt}/{max_attempts} failed for query '{query}': {exc}"
+                )
+                if attempt < max_attempts:
+                    time.sleep(1.5 * attempt)
+
+        if not raw_results:
+            print(
+                "[!] Search returned no raw results; skipping parse step for this round."
+            )
+            return {node_cfg["output_key"]: []}
+
+        parse_prompt_template = node_cfg.get(
+            "parse_prompt",
             "Extract only ACTUAL job openings from these results into JSON. "
             "Ignore ads and blogs. Required format: {'jobs': [{'title': '...', 'url': '...', 'snippet': '...'}]}\n\n"
-            f"Results: {raw_results}"
+            "Results: {raw_results}",
         )
+        parse_prompt = parse_prompt_template.format(**state, raw_results=raw_results)
         parsed = self.json_llm.invoke(parse_prompt).content
 
         jobs: list[dict] = []
         try:
             data = json.loads(parsed) if isinstance(parsed, str) else parsed
-            jobs = [
-                job
-                for job in data.get("jobs", [])
-                if job.get("url") and "http" in job.get("url")
-            ]
+            jobs = self._sanitize_jobs(data.get("jobs", []))
         except Exception:
             jobs = []
 
         return {node_cfg["output_key"]: jobs}
+
+    def _sanitize_jobs(self, jobs: list[dict]) -> list[dict]:
+        blocked_domains = {"example.com", "www.example.com"}
+        cleaned: list[dict] = []
+        seen_urls: set[str] = set()
+
+        for job in jobs:
+            url = (job.get("url") or "").strip()
+            if not url.startswith("http"):
+                continue
+
+            domain = (urlparse(url).hostname or "").lower()
+            if domain in blocked_domains:
+                continue
+
+            if url in seen_urls:
+                continue
+
+            seen_urls.add(url)
+            cleaned.append(job)
+
+        return cleaned
 
 
 class ScraperNodeHandler:
@@ -99,24 +142,53 @@ class ScraperNodeHandler:
 
         for job in listings[: self.settings.scrape_max_listings]:
             url = job.get("url")
-            try:
-                response = requests.get(
-                    url,
-                    headers={"User-Agent": self.settings.scrape_user_agent},
-                    timeout=self.settings.scrape_timeout_seconds,
-                )
-                soup = BeautifulSoup(response.text, "html.parser")
-                for element in soup(["script", "style"]):
-                    element.decompose()
-                job["page_content"] = soup.get_text(separator=" ", strip=True)[
-                    : self.settings.scrape_max_chars
-                ]
-            except Exception as exc:
-                job["page_content"] = f"Scrape error: {exc}"
+            job["page_content"] = self._scrape_url(url)
 
             scraped_listings.append(job)
 
         return {node_cfg["output_key"]: scraped_listings}
+
+    def _scrape_url(self, url: str) -> str:
+        headers = {"User-Agent": self.settings.scrape_user_agent}
+        last_exception: Exception | None = None
+
+        for _ in range(self.settings.scrape_retry_attempts + 1):
+            try:
+                response = requests.get(
+                    url,
+                    headers=headers,
+                    timeout=self.settings.scrape_timeout_seconds,
+                    verify=requests.certs.where(),
+                )
+                soup = BeautifulSoup(response.text, "html.parser")
+                for element in soup(["script", "style"]):
+                    element.decompose()
+                return soup.get_text(separator=" ", strip=True)[
+                    : self.settings.scrape_max_chars
+                ]
+            except requests.exceptions.SSLError as exc:
+                last_exception = exc
+                if not self.settings.scrape_allow_insecure_tls_fallback:
+                    break
+                try:
+                    response = requests.get(
+                        url,
+                        headers=headers,
+                        timeout=self.settings.scrape_timeout_seconds,
+                        verify=False,
+                    )
+                    soup = BeautifulSoup(response.text, "html.parser")
+                    for element in soup(["script", "style"]):
+                        element.decompose()
+                    return soup.get_text(separator=" ", strip=True)[
+                        : self.settings.scrape_max_chars
+                    ]
+                except Exception as insecure_exc:
+                    last_exception = insecure_exc
+            except Exception as exc:
+                last_exception = exc
+
+        return f"Scrape error: {last_exception}"
 
 
 class NodeExecutor:
