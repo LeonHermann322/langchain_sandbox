@@ -20,7 +20,7 @@ class AgentState(TypedDict):
     specifications: str
     current_search_query: str
     job_listings: List[dict]
-    job_listings_with_content: List[dict]  # <--- Add this line
+    job_listings_with_content: List[dict]
     valid_results: Annotated[List[dict], operator.add]
     critique: str
     iterations: int
@@ -34,12 +34,13 @@ class GenericWorkflow:
         self.json_llm = self.llm.bind(format="json")
         self.search_tool = DuckDuckGoSearchResults()
 
-        # Setup Logging Directory
+        # Setup Logging Directories
         self.log_dir = "workflow_logs"
+        self.results_dir = "results"  # Added results directory
         os.makedirs(self.log_dir, exist_ok=True)
+        os.makedirs(self.results_dir, exist_ok=True)
 
     def _execute_node(self, node_cfg: Dict, state: AgentState):
-        # Only print the active agent to command line
         print(f"[*] Agent Running: {node_cfg['id']}")
 
         node_type = node_cfg["type"]
@@ -62,19 +63,16 @@ class GenericWorkflow:
 
                 if "output_mapping" in node_cfg:
                     for json_key, state_key in node_cfg["output_mapping"].items():
-                        # Use a default empty list for passed_ids if missing
                         val = data.get(json_key)
 
                         if state_key == "valid_results":
                             if val is None:
-                                print(
-                                    f"[*] Warning: LLM omitted '{json_key}'. Defaulting to empty list."
-                                )
                                 val = []
 
-                            # Use the correct source list (scraped content)
+                            # Determine source (scraped vs raw)
                             source_list = state.get(
-                                "job_listings_with_content", state["job_listings"]
+                                "job_listings_with_content",
+                                state.get("job_listings", []),
                             )
 
                             if not isinstance(val, list):
@@ -88,8 +86,6 @@ class GenericWorkflow:
                                         valid_items.append(source_list[idx])
                                 except (ValueError, TypeError):
                                     continue
-
-                            # Use operator.add logic: we only want to add NEW valid items
                             updates[state_key] = valid_items
                         else:
                             updates[state_key] = (
@@ -104,67 +100,48 @@ class GenericWorkflow:
         elif node_type == "search_tool":
             query = re.sub(r'[()"`]', "", state[node_cfg["input_key"]])
             raw_results = self.search_tool.invoke(query)
-
-            # Improved Parse Prompt: Tell the LLM to ignore non-job links
             parse_prompt = (
-                f"I have search results from a job search. "
-                f"Extract only the ACTUAL job openings into a JSON list. "
-                f"Ignore blog posts, 'vs' guides, and homepage links. "
-                f"Required format: {{'jobs': [{{'title': '...', 'url': '...', 'snippet': '...'}}]}}\n\n"
-                f"Search Results: {raw_results}"
+                f"Extract only ACTUAL job openings from these results into JSON. "
+                f"Ignore ads and blogs. Required format: {{'jobs': [{{'title': '...', 'url': '...', 'snippet': '...'}}]}}\n\n"
+                f"Results: {raw_results}"
             )
-
             parsed = self.json_llm.invoke(parse_prompt).content
             try:
-                # Handle potential string or dict response
                 data = json.loads(parsed) if isinstance(parsed, str) else parsed
-                jobs = data.get("jobs", [])
-
-                # Filter out jobs that don't have a real URL (prevents the 'Hiring Manager' empty rows)
-                jobs = [j for j in jobs if j.get("url") and "http" in j.get("url")]
-
-            except Exception as e:
-                print(f"[*] Error parsing search results: {e}")
+                jobs = [
+                    j
+                    for j in data.get("jobs", [])
+                    if j.get("url") and "http" in j.get("url")
+                ]
+            except:
                 jobs = []
-
             updates[node_cfg["output_key"]] = jobs
+
+        # 3. Handle Scraper
         elif node_type == "web_scraper":
             listings = state.get(node_cfg["input_key"], [])
             scraped_listings = []
-
-            # We only scrape the first 5-7 to save time/prevent rate limits
             for job in listings[:7]:
                 url = job.get("url")
                 try:
-                    # Basic scraping - Note: LinkedIn often blocks simple requests
-                    # Using headers to look more like a browser
-                    headers = {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                    }
-                    response = requests.get(url, headers=headers, timeout=10)
-                    soup = BeautifulSoup(response.text, "html.parser")
-
-                    # Remove script/style elements
-                    for script in soup(["script", "style"]):
-                        script.decompose()
-
-                    page_text = soup.get_text(separator=" ", strip=True)[
-                        :2000
-                    ]  # Get first 2000 chars
-                    job["page_content"] = page_text
+                    headers = {"User-Agent": "Mozilla/5.0"}
+                    resp = requests.get(url, headers=headers, timeout=8)
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    for s in soup(["script", "style"]):
+                        s.decompose()
+                    job["page_content"] = soup.get_text(separator=" ", strip=True)[
+                        :2500
+                    ]
                     scraped_listings.append(job)
                 except Exception as e:
-                    job["page_content"] = f"Error scraping: {str(e)}"
+                    job["page_content"] = f"Scrape error: {str(e)}"
                     scraped_listings.append(job)
-
             updates[node_cfg["output_key"]] = scraped_listings
 
         # --- LOGGING TO FILE ---
-        # Capture the full state after updates
         full_current_state = {**state, **updates}
         timestamp = datetime.now().strftime("%H-%M-%S_%f")
         log_filename = f"step_{state['iterations']}_{node_cfg['id']}_{timestamp}.json"
-
         with open(os.path.join(self.log_dir, log_filename), "w") as f:
             json.dump(full_current_state, f, indent=4)
 
@@ -202,13 +179,11 @@ def doc_ocr(file_path: str, job_location: str) -> str:
         )
         for page_image in pages:
             resume_text += pytesseract.image_to_string(page_image, lang="eng") + "\n"
-    except Exception as e:
+    except Exception:
         return f"Junior AI Engineer in {job_location}"
-
     resume_text = resume_text.strip()
     if not resume_text or len(resume_text) < 100:
         return f"Junior AI Engineer in {job_location}"
-
     print(f"✅ OCR Completed ({len(resume_text)} chars)")
     return f"Junior AI roles in {job_location} for a candidate with these skills: {resume_text[:1000]}"
 
@@ -225,11 +200,32 @@ if __name__ == "__main__":
         {
             "specifications": specs,
             "job_listings": [],
+            "job_listings_with_content": [],
             "valid_results": [],
             "critique": "None",
             "iterations": 0,
         }
     )
 
-    print(f"\nWorkflow Finished. Check 'workflow_logs' for details.")
-    print(f"Found {len(results['valid_results'])} jobs.")
+    # --- FINAL RESULTS LOGGING ---
+    results_dir = "results"
+    os.makedirs(results_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    final_file = os.path.join(results_dir, f"verified_jobs_{timestamp}.json")
+
+    final_output = {
+        "search_metadata": {
+            "location": LOCATION,
+            "total_iterations": results["iterations"],
+            "jobs_found_count": len(results["valid_results"]),
+        },
+        "verified_listings": results["valid_results"],
+    }
+
+    with open(final_file, "w") as f:
+        json.dump(final_output, f, indent=4)
+
+    print(f"\nWorkflow Finished.")
+    print(f"Total Verified Jobs Found: {len(results['valid_results'])}")
+    print(f"Final results saved to: {final_file}")
