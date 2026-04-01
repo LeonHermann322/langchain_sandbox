@@ -1,9 +1,10 @@
 {
+  "entry_point": "query_generator",
   "nodes": [
     {
-      "id": "optimizer",
+      "id": "query_generator",
       "type": "llm",
-      "prompt": "Create a search query searching for jobs which align with the resume description: {specifications}. Feedback: {critique}. Output only the query and nothing else.",
+      "prompt": "You are a job search expert. Based on this resume: {specifications}\n\nAnd this previous critique: {critique}\n\nGenerate a SIMPLE search query. \nRules:\n1. NO parentheses, NO 'AND', NO 'OR'.\n2. Use 'site:boards.greenhouse.io' OR 'site:jobs.lever.co' OR 'site:ashbyhq.com'.\n3. Include 'Berlin' and the job title.\n4. Example: site:boards.greenhouse.io Berlin Junior AI Engineer\n\nOutput ONLY the query string.",
       "output_key": "current_search_query"
     },
     {
@@ -13,25 +14,34 @@
       "output_key": "job_listings"
     },
     {
+      "id": "scraper",
+      "type": "web_scraper",
+      "input_key": "job_listings",
+      "output_key": "job_listings_with_content"
+    },
+    {
       "id": "validator",
       "type": "llm_json",
-      "prompt": "Client description: {specifications}. Jobs: {job_listings}. Validate each job against the client description. Return JSON with 'passed_ids' (list) and 'feedback' (string).",
+      "prompt": "You are a recruitment gatekeeper. Review the following scraped job data against these requirements: {specifications}\n\nJobs to evaluate (JSON format): {job_listings_with_content}\n\nCRITICAL INSTRUCTIONS:\n1. Check if the job is 'Closed', 'Filled', or 'No longer accepting applications'.\n2. Match the candidate's core skills to the job description.\n3. You MUST return a JSON object with EXACTLY two keys: 'passed_ids' and 'critique'.\n4. 'passed_ids' MUST be a list of integers (e.g., [0, 2]). If NO jobs match, return [].\n5. 'critique' should explain why jobs failed (e.g., 'All jobs found were for Senior roles' or 'Links were expired').\n\nExample Output:\n{{\"passed_ids\": [1], \"critique\": \"Job 0 was closed, Job 1 is a perfect match.\"}}",
       "output_mapping": {
         "passed_ids": "valid_results",
-        "feedback": "critique"
+        "critique": "critique"
       }
     }
   ],
   "edges": [
-    ["optimizer", "searcher"],
-    ["searcher", "validator"]
+    ["query_generator", "searcher"],
+    ["searcher", "scraper"],
+    ["scraper", "validator"]
   ],
   "conditional_edges": [
     {
       "source": "validator",
-      "condition": "len(state['valid_results']) < 5 and state['iterations'] < 3",
-      "mapping": { "true": "optimizer", "false": "END" }
+      "condition": "len(state['valid_results']) < 5 and state['iterations'] < 8",
+      "mapping": {
+        "true": "query_generator",
+        "false": "END"
+      }
     }
-  ],
-  "entry_point": "optimizer"
+  ]
 }

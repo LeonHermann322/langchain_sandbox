@@ -9,6 +9,8 @@ from langchain_community.tools import DuckDuckGoSearchResults
 from langgraph.graph import StateGraph, END
 from pdf2image import convert_from_path
 import pytesseract
+import requests
+from bs4 import BeautifulSoup
 
 pytesseract.pytesseract.tesseract_cmd = r"E:/Tesseract/tesseract.exe"
 
@@ -18,6 +20,7 @@ class AgentState(TypedDict):
     specifications: str
     current_search_query: str
     job_listings: List[dict]
+    job_listings_with_content: List[dict]  # <--- Add this line
     valid_results: Annotated[List[dict], operator.add]
     critique: str
     iterations: int
@@ -49,20 +52,50 @@ class GenericWorkflow:
             response = model.invoke(prompt).content
 
             if node_type == "llm_json":
-                data = json.loads(response) if isinstance(response, str) else response
+                try:
+                    data = (
+                        json.loads(response) if isinstance(response, str) else response
+                    )
+                except json.JSONDecodeError:
+                    print(f"[!] Error: LLM returned invalid JSON: {response}")
+                    data = {}
+
                 if "output_mapping" in node_cfg:
                     for json_key, state_key in node_cfg["output_mapping"].items():
+                        # Use a default empty list for passed_ids if missing
                         val = data.get(json_key)
-                        print(val)
+
                         if state_key == "valid_results":
-                            print(len(state["job_listings"]))
-                            updates[state_key] = [
-                                state["job_listings"][i]
-                                for i in val
-                                if i < len(state["job_listings"])
-                            ]
+                            if val is None:
+                                print(
+                                    f"[*] Warning: LLM omitted '{json_key}'. Defaulting to empty list."
+                                )
+                                val = []
+
+                            # Use the correct source list (scraped content)
+                            source_list = state.get(
+                                "job_listings_with_content", state["job_listings"]
+                            )
+
+                            if not isinstance(val, list):
+                                val = []
+
+                            valid_items = []
+                            for i in val:
+                                try:
+                                    idx = int(i)
+                                    if idx < len(source_list):
+                                        valid_items.append(source_list[idx])
+                                except (ValueError, TypeError):
+                                    continue
+
+                            # Use operator.add logic: we only want to add NEW valid items
+                            updates[state_key] = valid_items
                         else:
-                            updates[state_key] = val
+                            updates[state_key] = (
+                                val if val is not None else "No critique provided."
+                            )
+
                 updates["iterations"] = state["iterations"] + 1
             else:
                 updates[node_cfg["output_key"]] = response.strip().replace('"', "")
@@ -71,14 +104,60 @@ class GenericWorkflow:
         elif node_type == "search_tool":
             query = re.sub(r'[()"`]', "", state[node_cfg["input_key"]])
             raw_results = self.search_tool.invoke(query)
-            parse_prompt = f"Convert this text to a JSON list of jobs (title, url, snippet): {raw_results}"
-            parsed = self.json_llm.invoke(parse_prompt).content
-            jobs = (
-                json.loads(parsed).get("jobs", [])
-                if isinstance(parsed, str)
-                else parsed.get("jobs", [])
+
+            # Improved Parse Prompt: Tell the LLM to ignore non-job links
+            parse_prompt = (
+                f"I have search results from a job search. "
+                f"Extract only the ACTUAL job openings into a JSON list. "
+                f"Ignore blog posts, 'vs' guides, and homepage links. "
+                f"Required format: {{'jobs': [{{'title': '...', 'url': '...', 'snippet': '...'}}]}}\n\n"
+                f"Search Results: {raw_results}"
             )
+
+            parsed = self.json_llm.invoke(parse_prompt).content
+            try:
+                # Handle potential string or dict response
+                data = json.loads(parsed) if isinstance(parsed, str) else parsed
+                jobs = data.get("jobs", [])
+
+                # Filter out jobs that don't have a real URL (prevents the 'Hiring Manager' empty rows)
+                jobs = [j for j in jobs if j.get("url") and "http" in j.get("url")]
+
+            except Exception as e:
+                print(f"[*] Error parsing search results: {e}")
+                jobs = []
+
             updates[node_cfg["output_key"]] = jobs
+        elif node_type == "web_scraper":
+            listings = state.get(node_cfg["input_key"], [])
+            scraped_listings = []
+
+            # We only scrape the first 5-7 to save time/prevent rate limits
+            for job in listings[:7]:
+                url = job.get("url")
+                try:
+                    # Basic scraping - Note: LinkedIn often blocks simple requests
+                    # Using headers to look more like a browser
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    }
+                    response = requests.get(url, headers=headers, timeout=10)
+                    soup = BeautifulSoup(response.text, "html.parser")
+
+                    # Remove script/style elements
+                    for script in soup(["script", "style"]):
+                        script.decompose()
+
+                    page_text = soup.get_text(separator=" ", strip=True)[
+                        :2000
+                    ]  # Get first 2000 chars
+                    job["page_content"] = page_text
+                    scraped_listings.append(job)
+                except Exception as e:
+                    job["page_content"] = f"Error scraping: {str(e)}"
+                    scraped_listings.append(job)
+
+            updates[node_cfg["output_key"]] = scraped_listings
 
         # --- LOGGING TO FILE ---
         # Capture the full state after updates
