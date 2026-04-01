@@ -7,8 +7,8 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from ..core.settings import WorkflowSettings
-from ..core.types import AgentState, NodeConfig, StateUpdate
+from core.settings import WorkflowSettings
+from core.types import AgentState, NodeConfig, StateUpdate
 
 
 class LLMNodeHandler:

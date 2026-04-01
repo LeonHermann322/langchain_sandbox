@@ -5,10 +5,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ..core.settings import WorkflowSettings
-from ..core.types import GenericState
-from ..services.resume import ResumeExtractor
-from ..workflow import GenericWorkflow
+from core.settings import WorkflowSettings
+from core.types import GenericState
+from workflow import GenericWorkflow
 
 
 def create_initial_job_search_state(
@@ -23,6 +22,7 @@ def create_initial_job_search_state(
     The state structure is defined by the workflow.json, not hardcoded here.
     """
     settings = settings or WorkflowSettings.from_env()
+    from services.resume import ResumeExtractor
 
     # Extract specifications from resume
     specs = ResumeExtractor(settings).extract(resume_path, location)

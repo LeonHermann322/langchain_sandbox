@@ -4,8 +4,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from ..core.settings import WorkflowSettings
-from ..core.types import WorkflowConfig
+from core.settings import WorkflowSettings
+from core.types import WorkflowConfig
 
 
 class WorkflowIO:

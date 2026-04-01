@@ -4,9 +4,9 @@ from typing import Any, Dict
 
 from langgraph.graph import END, StateGraph
 
-from ..core.conditions import SafeConditionEvaluator
-from ..core.types import AgentState, GenericState, WorkflowConfig
-from ..services.io import WorkflowIO
+from core.conditions import SafeConditionEvaluator
+from core.types import AgentState, GenericState, WorkflowConfig
+from services.io import WorkflowIO
 
 
 class GenericWorkflowOrchestrator:

@@ -9,7 +9,7 @@ if str(SRC_PATH) not in sys.path:
 
 
 def doc_ocr(file_path: str, job_location: str) -> str:
-    from workflow.services.resume import ResumeExtractor
+    from services.resume import ResumeExtractor
 
     return ResumeExtractor().extract(file_path, job_location)
 
@@ -62,7 +62,7 @@ def main() -> None:
     args = build_cli().parse_args()
 
     if args.mode == "jobs":
-        from workflow.application.app import run_job_search_workflow
+        from application.app import run_job_search_workflow
 
         run_job_search_workflow(
             config_path=args.jobs_config,
@@ -72,7 +72,7 @@ def main() -> None:
         return
 
     # world mode
-    from workflow.application.app import run_world_building_workflow, run_world_main
+    from application.app import run_world_building_workflow, run_world_main
 
     if args.prompt:
         run_world_building_workflow(

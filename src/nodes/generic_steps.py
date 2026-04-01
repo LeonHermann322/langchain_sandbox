@@ -5,10 +5,10 @@ import re
 import time
 from typing import Any, Dict
 
-from ..core.interfaces import Step
-from ..core.settings import WorkflowSettings
-from ..core.tool_registry import ToolRegistry
-from ..core.types import NodeConfig, StateUpdate, GenericState
+from core.interfaces import Step
+from core.settings import WorkflowSettings
+from core.tool_registry import ToolRegistry
+from core.types import NodeConfig, StateUpdate, GenericState
 
 
 class _SafeFormatDict(dict):
@@ -67,6 +67,12 @@ class LLMStep(Step):
             value = data.get(json_key)
             if value is not None:
                 updates[state_key] = value
+            elif state_key.endswith("_qa_ok"):
+                # Missing QA decision should never inherit stale previous value.
+                updates[state_key] = False
+            elif state_key.endswith("_qa_feedback"):
+                # Missing QA feedback should be explicit and visible in logs.
+                updates[state_key] = "No QA feedback returned."
             elif state_key in state:
                 # Preserve previous value instead of poisoning state with placeholders.
                 updates[state_key] = state[state_key]

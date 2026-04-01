@@ -4,19 +4,19 @@ from typing import Any, Callable, Dict
 
 from langchain_ollama import ChatOllama
 
-from .core.conditions import SafeConditionEvaluator
-from .core.settings import WorkflowSettings
-from .core.tool_registry import ToolRegistry
-from .core.types import GenericState, WorkflowConfig
-from .engine.generic_orchestrator import GenericWorkflowOrchestrator
-from .nodes.generic_steps import (
+from core.conditions import SafeConditionEvaluator
+from core.settings import WorkflowSettings
+from core.tool_registry import ToolRegistry
+from core.types import GenericState, WorkflowConfig
+from engine.generic_orchestrator import GenericWorkflowOrchestrator
+from nodes.generic_steps import (
     LLMStep,
     LLMToolStep,
     StepExecutor,
     StepRegistry,
     ToolStep,
 )
-from .services.io import WorkflowIO
+from services.io import WorkflowIO
 
 
 class GenericWorkflow:

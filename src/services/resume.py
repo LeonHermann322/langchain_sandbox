@@ -1,7 +1,7 @@
 from pdf2image import convert_from_path
 import pytesseract
 
-from ..core.settings import WorkflowSettings
+from core.settings import WorkflowSettings
 
 
 class ResumeExtractor:
