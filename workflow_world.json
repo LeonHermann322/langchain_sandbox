@@ -10,6 +10,12 @@
     "character_qa_ok": "bool",
     "character_qa_feedback": "str",
     "character_count": "int",
+    "story_arcs": "list",
+    "current_story_arc": "dict",
+    "story_qa_ok": "bool",
+    "story_qa_feedback": "str",
+    "story_arc_count": "int",
+    "final_story": "str",
     "iterations": "int"
   },
   "entry_point": "world_builder",
@@ -55,11 +61,36 @@
         "character_count": "character_count"
       },
       "increment_iterations": false
+    },
+    {
+      "id": "story_builder",
+      "type": "llm_json",
+      "temperature": 0.9,
+      "prompt": "You are a creative long-form story architect.\n\nWorld:\n{detailed_world}\n\nCanonical characters (all must matter in the overall story):\n{characters}\n\nExisting accepted arcs:\n{story_arcs}\n\nStory QA feedback:\n{story_qa_feedback}\n\nTask:\nWrite exactly ONE NEW story arc that fits the same world and includes meaningful involvement of the existing characters across the broader narrative.\n\nConstraints:\n1. This arc must be distinct from previous arcs in tone/conflict focus.\n2. Raise stakes compared to prior arcs.\n3. Introduce morally ambiguous choices (no simple good/evil framing).\n4. Keep continuity with world physics and character motivations.\n5. This is an arc draft only; do not output the full final story yet.\n\nOutput JSON only:\n{{\"current_story_arc\": {{\"arc_number\": 0, \"title\": \"...\", \"premise\": \"...\", \"key_events\": [\"...\"], \"character_focus\": [\"...\"], \"moral_tension\": \"...\", \"ending_hook\": \"...\"}}}}",
+      "output_mapping": {
+        "current_story_arc": "current_story_arc"
+      },
+      "increment_iterations": true
+    },
+    {
+      "id": "story_qa",
+      "type": "llm_json",
+      "temperature": 0.2,
+      "prompt": "You are a strict but practical story QA editor.\n\nWorld:\n{detailed_world}\n\nCharacters:\n{characters}\n\nExisting accepted arcs:\n{story_arcs}\n\nCandidate arc:\n{current_story_arc}\n\nTask:\n1. Validate world consistency, character consistency, novelty vs prior arcs, and narrative quality.\n2. If accepted, append candidate arc to story_arcs and increment story_arc_count.\n3. If rejected, keep story_arcs unchanged and provide concise correction feedback.\n4. ALWAYS output non-empty story_qa_feedback.\n5. If story_arc_count reaches 3 after acceptance, also produce final_story that ties ALL arcs together and ends with a thought-provoking morally grey climax.\n\nDecision policy:\n- Reject only for clear continuity/consistency/duplication failures.\n- Accept if issues are minor and can be refined later.\n\nOutput JSON only:\n{{\"story_qa_ok\": true/false, \"story_qa_feedback\": \"...\", \"story_arcs\": [...], \"story_arc_count\": 0, \"final_story\": \"...or empty if fewer than 3 accepted arcs\"}}",
+      "output_mapping": {
+        "story_qa_ok": "story_qa_ok",
+        "story_qa_feedback": "story_qa_feedback",
+        "story_arcs": "story_arcs",
+        "story_arc_count": "story_arc_count",
+        "final_story": "final_story"
+      },
+      "increment_iterations": false
     }
   ],
   "edges": [
     ["world_builder", "world_qa"],
-    ["character_builder", "character_consistency_qa"]
+    ["character_builder", "character_consistency_qa"],
+    ["story_builder", "story_qa"]
   ],
   "conditional_edges": [
     {
@@ -74,8 +105,16 @@
       "source": "character_consistency_qa",
       "condition": "state['character_count'] >= 5 or state['iterations'] >= 40",
       "mapping": {
-        "true": "END",
+        "true": "story_builder",
         "false": "character_builder"
+      }
+    },
+    {
+      "source": "story_qa",
+      "condition": "state['story_arc_count'] >= 3 or state['iterations'] >= 70",
+      "mapping": {
+        "true": "END",
+        "false": "story_builder"
       }
     }
   ]
