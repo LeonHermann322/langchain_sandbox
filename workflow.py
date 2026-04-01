@@ -32,7 +32,7 @@ class GenericWorkflow:
             self.config = json.load(f)
         self.llm = ChatOllama(model="llama3.1", temperature=0)
         self.json_llm = self.llm.bind(format="json")
-        self.search_tool = DuckDuckGoSearchResults()
+        self.search_tool = DuckDuckGoSearchResults(num_results=20)
 
         # Setup Logging Directories
         self.log_dir = "workflow_logs"

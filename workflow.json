@@ -3,9 +3,11 @@
   "nodes": [
     {
       "id": "query_generator",
-      "type": "llm",
-      "prompt": "You are a job search expert. Based on this resume: {specifications}\n\nAnd this previous critique: {critique}\n\nGenerate a SIMPLE search query. \nRules:\n1. NO parentheses, NO 'AND', NO 'OR'.\n2. Use 'site:boards.greenhouse.io' OR 'site:jobs.lever.co' OR 'site:ashbyhq.com'.\n3. Include 'Berlin' and the job title.\n4. Example: site:boards.greenhouse.io Berlin Junior AI Engineer\n\nOutput ONLY the query string.",
-      "output_key": "current_search_query"
+      "type": "llm_json",
+      "prompt": "You are a job search machine. Location: BERLIN.\n\nCandidate: {specifications}\nPrevious Critique: {critique}\n\nTask: Generate ONE specific search query.\nRules:\n1. Expand titles: Use keywords like 'Graduate Machine Learning', 'Junior Data Scientist', 'Associate AI Engineer', or 'Junior Software Engineer AI'.\n2. Target specific posts: Add 'inurl:jobs' or 'inurl:render' to the query to find specific job descriptions rather than company homepages.\n3. Site Filter: Cycle between 'site:boards.greenhouse.io', 'site:jobs.lever.co', or 'site:ashbyhq.com'.\n4. Exclude: {critique} (Look at rejected companies and use the minus sign, e.g., -JetBrains).\n\nExample Output: {{\"query\": \"site:jobs.lever.co \\\"Berlin\\\" Graduate Machine Learning -JetBrains\"}}",
+      "output_mapping": {
+        "query": "current_search_query"
+      }
     },
     {
       "id": "searcher",
@@ -22,7 +24,7 @@
     {
       "id": "validator",
       "type": "llm_json",
-      "prompt": "You are a recruitment gatekeeper. Review the following scraped job data against these requirements: {specifications}\n\nJobs to evaluate (JSON format): {job_listings_with_content}\n\nCRITICAL INSTRUCTIONS:\n1. Check if the job is 'Closed', 'Filled', or 'No longer accepting applications'.\n2. Match the candidate's core skills to the job description.\n3. You MUST return a JSON object with EXACTLY two keys: 'passed_ids' and 'critique'.\n4. 'passed_ids' MUST be a list of integers (e.g., [0, 2]). If NO jobs match, return [].\n5. 'critique' should explain why jobs failed (e.g., 'All jobs found were for Senior roles' or 'Links were expired').\n\nExample Output:\n{{\"passed_ids\": [1], \"critique\": \"Job 0 was closed, Job 1 is a perfect match.\"}}",
+      "prompt": "You are a recruitment gatekeeper. \n\nCandidate Specs: {specifications}\nScraped Data: {job_listings_with_content}\n\nCRITICAL EVALUATION RULES:\n1. LOCATION: If Berlin is listed as ONE of the locations (even if there are others like London or Amsterdam), this is a MATCH. Do not reject multi-location roles.\n2. ROLE: A 'Junior Data Scientist' or 'Machine Learning Engineer' is a match for this candidate's ML research background.\n3. CONTENT: If the scraped text is a 'List of Jobs' rather than a single job description, look for the most relevant title in that list. If a relevant Berlin title exists, mark it as passed.\n\nResponse Format (JSON):\n- passed_ids: List of indices.\n- critique: String listing companies seen/rejected to avoid repeats.\n\nExample: {{\"passed_ids\": [0], \"critique\": \"Found Freenow and JetBrains. JetBrains is a match because Berlin is listed.\"}}",
       "output_mapping": {
         "passed_ids": "valid_results",
         "critique": "critique"
@@ -37,7 +39,7 @@
   "conditional_edges": [
     {
       "source": "validator",
-      "condition": "len(state['valid_results']) < 5 and state['iterations'] < 8",
+      "condition": "len(state['valid_results']) < 5 and state['iterations'] < 12",
       "mapping": {
         "true": "query_generator",
         "false": "END"
