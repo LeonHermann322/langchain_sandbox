@@ -13,6 +13,9 @@ class WorkflowSettings:
     scrape_max_chars: int = 2500
     scrape_max_listings: int = 7
     scrape_allow_insecure_tls_fallback: bool = True
+    checkpoint_backend: str = "memory"
+    checkpoint_sqlite_path: str = "workflow_checkpoints.sqlite"
+    stream_log_events: bool = False
     log_dir: str = "workflow_logs"
     results_dir: str = "results"
     tesseract_cmd: str = r"E:/Tesseract/tesseract.exe"
@@ -46,6 +49,17 @@ class WorkflowSettings:
             scrape_allow_insecure_tls_fallback=os.getenv(
                 "WORKFLOW_SCRAPE_INSECURE_TLS_FALLBACK",
                 "true" if cls.scrape_allow_insecure_tls_fallback else "false",
+            ).lower()
+            in ("1", "true", "yes", "on"),
+            checkpoint_backend=os.getenv(
+                "WORKFLOW_CHECKPOINT_BACKEND", cls.checkpoint_backend
+            ).lower(),
+            checkpoint_sqlite_path=os.getenv(
+                "WORKFLOW_CHECKPOINT_SQLITE_PATH", cls.checkpoint_sqlite_path
+            ),
+            stream_log_events=os.getenv(
+                "WORKFLOW_STREAM_LOG_EVENTS",
+                "true" if cls.stream_log_events else "false",
             ).lower()
             in ("1", "true", "yes", "on"),
             log_dir=os.getenv("WORKFLOW_LOG_DIR", cls.log_dir),

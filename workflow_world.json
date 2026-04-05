@@ -1,17 +1,19 @@
 {
-  "description": "General world-building workflow with creative and QA loops plus iterative character generation.",
+  "description": "World-first workflow: draft Act 1, create its character roster in one planning step, QA Act 1, then write two additional arcs with QA.",
   "state_schema": {
     "world_specification": "str",
     "detailed_world": "str",
     "world_qa_ok": "bool",
     "world_qa_feedback": "str",
+    "desired_character_count": "int",
     "characters": "list",
-    "current_character": "dict",
-    "character_qa_ok": "bool",
-    "character_qa_feedback": "str",
     "character_count": "int",
     "story_arcs": "list",
     "current_story_arc": "dict",
+    "mentioned_characters": "list",
+    "character_creation_plan": "str",
+    "act1_qa_ok": "bool",
+    "act1_qa_feedback": "str",
     "story_qa_ok": "bool",
     "story_qa_feedback": "str",
     "story_arc_count": "int",
@@ -32,7 +34,7 @@
       "id": "world_qa",
       "type": "llm_json",
       "temperature": 0.1,
-      "prompt": "You are a strict but practical QA agent for narrative consistency.\n\nInitial specification:\n{world_specification}\n\nCandidate world:\n{detailed_world}\n\nEvaluate alignment and coherence.\n\nDecision policy:\n- Set world_qa_ok = false ONLY for hard failures (major contradiction with specification, broken world logic, or insufficient detail to create characters).\n- If issues are minor or polish-level, set world_qa_ok = true and provide a short improvement note.\n\nOutput JSON only:\n{{\"world_qa_ok\": true/false, \"world_qa_feedback\": \"brief actionable note; if accepted, this is optional improvement guidance\"}}",
+      "prompt": "You are a strict but practical QA agent for narrative consistency.\n\nInitial specification:\n{world_specification}\n\nCandidate world:\n{detailed_world}\n\nEvaluate alignment and coherence.\n\nDecision policy:\n- Set world_qa_ok = false ONLY for hard failures (major contradiction with specification, broken world logic, or insufficient detail to support an Act 1 draft and character generation).\n- If issues are minor or polish-level, set world_qa_ok = true and provide a short improvement note.\n\nOutput JSON only:\n{{\"world_qa_ok\": true/false, \"world_qa_feedback\": \"brief actionable note; if accepted, this is optional improvement guidance\"}}",
       "output_mapping": {
         "world_qa_ok": "world_qa_ok",
         "world_qa_feedback": "world_qa_feedback"
@@ -40,25 +42,39 @@
       "increment_iterations": false
     },
     {
-      "id": "character_builder",
+      "id": "act1_builder",
       "type": "llm_json",
       "temperature": 0.9,
-      "prompt": "You are a creative character designer.\n\nWorld physics and setting:\n{detailed_world}\n\nExisting characters (avoid duplicates in role, origin, archetype, and core motivation):\n{characters}\n\nCurrent character QA feedback:\n{character_qa_feedback}\n\nTask:\nCreate exactly ONE new character that is world-consistent AND creatively distinct.\n\nDiversity constraints:\n1. Avoid repeating role/archetype patterns from existing characters.\n2. Introduce at least one unusual but plausible trait (background, vocation blend, or worldview).\n3. Keep all abilities plausible for this world's technology and social systems.\n4. Use specific, concrete details rather than generic templates.\n\nOutput JSON only:\n{{\"current_character\": {{\"name\":\"...\",\"role\":\"...\",\"origin\":\"...\",\"core_motivation\":\"...\",\"conflict\":\"...\",\"skills\": [\"...\"],\"flaws\":[\"...\"],\"world_link\":\"...\"}}}}",
+      "prompt": "You are a creative story architect drafting Act 1 for a larger narrative.\n\nWorld:\n{detailed_world}\n\nExisting characters already defined:\n{characters}\n\nCurrent Act 1 draft:\n{current_story_arc}\n\nAct 1 QA feedback:\n{act1_qa_feedback}\n\nTask:\nCreate or refine exactly ONE Act 1 draft that establishes the setting tension, core conflict vector, and clear hooks for later arcs.\nYou MAY mention or introduce main characters needed by the act.\nIf characters already exist, integrate them meaningfully.\n\nConstraints:\n1. Keep continuity with world logic and social/technical constraints.\n2. Include morally ambiguous pressure points.\n3. Mention a concrete set of main characters needed for this act (at least 2, usually 3-5).\n4. Output only an arc draft (not full story).\n\nOutput JSON only:\n{{\"current_story_arc\": {{\"arc_number\": 1, \"title\": \"...\", \"premise\": \"...\", \"key_events\": [\"...\"], \"character_focus\": [\"...\"], \"mentioned_characters\": [\"Name A\", \"Name B\"], \"moral_tension\": \"...\", \"ending_hook\": \"...\"}}}}",
       "output_mapping": {
-        "current_character": "current_character"
+        "current_story_arc": "current_story_arc"
       },
       "increment_iterations": true
     },
     {
-      "id": "character_consistency_qa",
+      "id": "act1_character_planner",
       "type": "llm_json",
-      "temperature": 0.3,
-      "prompt": "You are a consistency QA agent. Be strict on hard contradictions, but allow creative variation.\n\nWorld:\n{detailed_world}\n\nExisting approved characters:\n{characters}\n\nCandidate character:\n{current_character}\n\nDecision policy:\n- Reject ONLY if there is a hard contradiction with world physics/social rules OR a clear duplicate of an existing character.\n- Do NOT reject for minor style, wording, or debatable plausibility nitpicks.\n- Novel combinations are allowed if they are explainable within the world context.\n\nTask:\n1. Evaluate hard consistency and duplication.\n2. If accepted, append candidate to characters and increment character_count.\n3. If rejected, keep list unchanged.\n4. ALWAYS provide a non-empty character_qa_feedback string.\n   - If accepted: include a short acceptance rationale.\n   - If rejected: include concise corrective guidance focused on hard failures only.\n\nOutput JSON only:\n{{\"character_qa_ok\": true/false, \"character_qa_feedback\": \"non-empty rationale\", \"characters\": [...], \"character_count\": 0}}",
+      "temperature": 0.6,
+      "prompt": "You are a cast-planning and character-creation assistant.\n\nWorld:\n{detailed_world}\n\nAct 1 draft:\n{current_story_arc}\n\nPreviously created characters:\n{characters}\n\nTask:\n1. Extract the intended main characters from current_story_arc.\n2. Set desired_character_count to the number of intended main characters (minimum 2, maximum 5).\n3. Set mentioned_characters to the canonical list of intended names.\n4. Create a complete characters roster that covers the mentioned main cast (no duplicates).\n5. Set character_count to the length of the characters list.\n6. Provide concise character_creation_plan as a short summary of cast-role coverage.\n\nCharacter constraints:\n- Keep all characters world-consistent and distinct.\n- Use concrete motivations, conflicts, skills, and flaws.\n- Do not invent extra main characters beyond the needed cast size.\n\nOutput JSON only:\n{{\"desired_character_count\": 0, \"mentioned_characters\": [\"...\"], \"character_creation_plan\": \"...\", \"characters\": [{{\"name\":\"...\",\"role\":\"...\",\"origin\":\"...\",\"core_motivation\":\"...\",\"conflict\":\"...\",\"skills\":[\"...\"],\"flaws\":[\"...\"],\"world_link\":\"...\"}}], \"character_count\": 0}}",
       "output_mapping": {
-        "character_qa_ok": "character_qa_ok",
-        "character_qa_feedback": "character_qa_feedback",
+        "desired_character_count": "desired_character_count",
+        "mentioned_characters": "mentioned_characters",
+        "character_creation_plan": "character_creation_plan",
         "characters": "characters",
         "character_count": "character_count"
+      },
+      "increment_iterations": false
+    },
+    {
+      "id": "act1_qa",
+      "type": "llm_json",
+      "temperature": 0.2,
+      "prompt": "You are a strict but practical QA editor for Act 1 drafts.\n\nWorld:\n{detailed_world}\n\nCandidate Act 1:\n{current_story_arc}\n\nMentioned characters for this act:\n{mentioned_characters}\n\nCreated character roster:\n{characters}\n\nCurrent accepted arcs list (Act 1 should be index 0 if present):\n{story_arcs}\n\nTask:\n1. Validate world consistency and narrative coherence.\n2. Validate that the created character roster adequately covers the characters required by Act 1.\n3. Reject only for hard failures (continuity breaks, impossible events, severe mismatch between act and cast).\n4. If accepted, set story_arcs to a single-element list containing the accepted Act 1 and set story_arc_count to 1.\n5. If rejected, keep story_arcs and story_arc_count unchanged.\n6. ALWAYS provide non-empty act1_qa_feedback.\n\nOutput JSON only:\n{{\"act1_qa_ok\": true/false, \"act1_qa_feedback\": \"...\", \"story_arcs\": [...], \"story_arc_count\": 0}}",
+      "output_mapping": {
+        "act1_qa_ok": "act1_qa_ok",
+        "act1_qa_feedback": "act1_qa_feedback",
+        "story_arcs": "story_arcs",
+        "story_arc_count": "story_arc_count"
       },
       "increment_iterations": false
     },
@@ -66,7 +82,7 @@
       "id": "story_builder",
       "type": "llm_json",
       "temperature": 0.9,
-      "prompt": "You are a creative long-form story architect.\n\nWorld:\n{detailed_world}\n\nCanonical characters (all must matter in the overall story):\n{characters}\n\nExisting accepted arcs:\n{story_arcs}\n\nStory QA feedback:\n{story_qa_feedback}\n\nTask:\nWrite exactly ONE NEW story arc that fits the same world and includes meaningful involvement of the existing characters across the broader narrative.\n\nConstraints:\n1. This arc must be distinct from previous arcs in tone/conflict focus.\n2. Raise stakes compared to prior arcs.\n3. Introduce morally ambiguous choices (no simple good/evil framing).\n4. Keep continuity with world physics and character motivations.\n5. This is an arc draft only; do not output the full final story yet.\n\nOutput JSON only:\n{{\"current_story_arc\": {{\"arc_number\": 0, \"title\": \"...\", \"premise\": \"...\", \"key_events\": [\"...\"], \"character_focus\": [\"...\"], \"moral_tension\": \"...\", \"ending_hook\": \"...\"}}}}",
+      "prompt": "You are a creative long-form story architect.\n\nWorld:\n{detailed_world}\n\nCanonical characters (fixed main cast; do not introduce additional main characters):\n{characters}\n\nExisting accepted arcs (Act 1 already included):\n{story_arcs}\n\nStory QA feedback:\n{story_qa_feedback}\n\nTask:\nWrite exactly ONE NEW additional story arc (Act 2 or Act 3) that builds on the existing arcs.\n\nConstraints:\n1. Do not add new main characters.\n2. This arc must be distinct from prior arcs in tone/conflict focus.\n3. Raise stakes compared to prior arcs.\n4. Include morally ambiguous choices (no simple good/evil framing).\n5. Keep continuity with world physics and character motivations.\n\nOutput JSON only:\n{{\"current_story_arc\": {{\"arc_number\": 0, \"title\": \"...\", \"premise\": \"...\", \"key_events\": [\"...\"], \"character_focus\": [\"...\"], \"moral_tension\": \"...\", \"ending_hook\": \"...\"}}}}",
       "output_mapping": {
         "current_story_arc": "current_story_arc"
       },
@@ -76,7 +92,7 @@
       "id": "story_qa",
       "type": "llm_json",
       "temperature": 0.2,
-      "prompt": "You are a strict but practical story QA editor.\n\nWorld:\n{detailed_world}\n\nCharacters:\n{characters}\n\nExisting accepted arcs:\n{story_arcs}\n\nCandidate arc:\n{current_story_arc}\n\nTask:\n1. Validate world consistency, character consistency, novelty vs prior arcs, and narrative quality.\n2. If accepted, append candidate arc to story_arcs and increment story_arc_count.\n3. If rejected, keep story_arcs unchanged and provide concise correction feedback.\n4. ALWAYS output non-empty story_qa_feedback.\n5. If story_arc_count reaches 3 after acceptance, also produce final_story that ties ALL arcs together and ends with a thought-provoking morally grey climax.\n\nDecision policy:\n- Reject only for clear continuity/consistency/duplication failures.\n- Accept if issues are minor and can be refined later.\n\nOutput JSON only:\n{{\"story_qa_ok\": true/false, \"story_qa_feedback\": \"...\", \"story_arcs\": [...], \"story_arc_count\": 0, \"final_story\": \"...or empty if fewer than 3 accepted arcs\"}}",
+      "prompt": "You are a strict but practical story QA editor for additional arcs.\n\nWorld:\n{detailed_world}\n\nCharacters:\n{characters}\n\nExisting accepted arcs:\n{story_arcs}\n\nCandidate arc:\n{current_story_arc}\n\nTask:\n1. Validate world consistency, character consistency, novelty vs prior arcs, and narrative quality.\n2. If accepted, append candidate arc to story_arcs and increment story_arc_count.\n3. If rejected, keep story_arcs unchanged and provide concise correction feedback.\n4. ALWAYS output non-empty story_qa_feedback.\n5. When story_arc_count reaches 3 after acceptance (Act 1 + two additional arcs), also produce final_story that ties all arcs together with a thought-provoking morally grey climax.\n\nDecision policy:\n- Reject only for clear continuity/consistency/duplication failures.\n- Accept if issues are minor and can be refined later.\n\nOutput JSON only:\n{{\"story_qa_ok\": true/false, \"story_qa_feedback\": \"...\", \"story_arcs\": [...], \"story_arc_count\": 0, \"final_story\": \"...or empty if fewer than 3 accepted arcs\"}}",
       "output_mapping": {
         "story_qa_ok": "story_qa_ok",
         "story_qa_feedback": "story_qa_feedback",
@@ -89,7 +105,7 @@
   ],
   "edges": [
     ["world_builder", "world_qa"],
-    ["character_builder", "character_consistency_qa"],
+    ["act1_builder", "act1_character_planner"],
     ["story_builder", "story_qa"]
   ],
   "conditional_edges": [
@@ -97,21 +113,29 @@
       "source": "world_qa",
       "condition": "state['world_qa_ok'] == True or state['iterations'] >= 8",
       "mapping": {
-        "true": "character_builder",
+        "true": "act1_builder",
         "false": "world_builder"
       }
     },
     {
-      "source": "character_consistency_qa",
-      "condition": "state['character_count'] >= 5 or state['iterations'] >= 40",
+      "source": "act1_character_planner",
+      "condition": "state['character_count'] >= state['desired_character_count'] and state['desired_character_count'] >= 2",
+      "mapping": {
+        "true": "act1_qa",
+        "false": "act1_character_planner"
+      }
+    },
+    {
+      "source": "act1_qa",
+      "condition": "state['act1_qa_ok'] == True",
       "mapping": {
         "true": "story_builder",
-        "false": "character_builder"
+        "false": "act1_builder"
       }
     },
     {
       "source": "story_qa",
-      "condition": "state['story_arc_count'] >= 3 or state['iterations'] >= 70",
+      "condition": "state['story_arc_count'] >= 3 or state['iterations'] >= 90",
       "mapping": {
         "true": "END",
         "false": "story_builder"

@@ -47,12 +47,17 @@ def build_cli() -> argparse.ArgumentParser:
     parser.add_argument(
         "--world-config",
         default="workflow_world.json",
-        help="Path to world-building workflow config JSON.",
+        help="Deprecated for world mode (kept for compatibility); world graph is defined in code.",
     )
     parser.add_argument(
         "--prompt",
         default=None,
         help="World-building specification prompt for world mode.",
+    )
+    parser.add_argument(
+        "--detailed-logs",
+        action="store_true",
+        help="Enable detailed step logs for world mode in workflow_logs/.",
     )
 
     return parser
@@ -78,6 +83,7 @@ def main() -> None:
         run_world_building_workflow(
             world_specification=args.prompt,
             config_path=args.world_config,
+            detailed_logs=args.detailed_logs,
         )
     else:
         run_world_main()

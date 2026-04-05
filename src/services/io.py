@@ -28,6 +28,27 @@ class WorkflowIO:
             json.dump(state, handle, indent=4)
         return str(full_path)
 
+    def log_stream_event(
+        self,
+        thread_id: str,
+        stream_mode: str,
+        event_type: str,
+        payload: Dict[str, Any],
+    ) -> str:
+        """Append a standardized stream event record as JSONL."""
+        safe_thread_id = str(thread_id).replace("/", "_").replace("\\", "_")
+        log_path = Path(self.settings.log_dir) / f"events_{safe_thread_id}.jsonl"
+        record = {
+            "timestamp": datetime.now().isoformat(timespec="milliseconds"),
+            "thread_id": str(thread_id),
+            "stream_mode": stream_mode,
+            "event_type": event_type,
+            "payload": payload,
+        }
+        with open(log_path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+        return str(log_path)
+
     def save_final_results(self, location: str, results: Dict[str, Any]) -> str:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = (

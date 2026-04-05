@@ -1,12 +1,15 @@
 """Application entry point - configures and runs generic workflow."""
 
 import json
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from core.settings import WorkflowSettings
 from core.types import GenericState
+from application.world_native_graph import WorldBuildingNativeWorkflow
+from services.io import WorkflowIO
 from workflow import GenericWorkflow
 
 
@@ -100,11 +103,19 @@ def create_initial_world_building_state(world_specification: str) -> GenericStat
         "detailed_world": "",
         "world_qa_ok": False,
         "world_qa_feedback": "No QA feedback yet.",
+        "desired_character_count": 2,
         "characters": [],
-        "current_character": {},
-        "character_qa_ok": False,
-        "character_qa_feedback": "No character QA feedback yet.",
         "character_count": 0,
+        "story_arcs": [],
+        "current_story_arc": {},
+        "mentioned_characters": [],
+        "character_creation_plan": "",
+        "act1_qa_ok": False,
+        "act1_qa_feedback": "No Act 1 QA feedback yet.",
+        "story_qa_ok": False,
+        "story_qa_feedback": "No story QA feedback yet.",
+        "story_arc_count": 0,
+        "final_story": "",
         "iterations": 0,
     }
 
@@ -112,15 +123,57 @@ def create_initial_world_building_state(world_specification: str) -> GenericStat
 def run_world_building_workflow(
     world_specification: str,
     config_path: str = "workflow_world.json",
+    detailed_logs: bool = False,
 ) -> GenericState:
-    """Run world-building workflow based on JSON configuration."""
+    """Run world-building workflow using native code-defined LangGraph."""
     settings = WorkflowSettings.from_env()
-    workflow = GenericWorkflow(config_path, settings=settings)
+    workflow = WorldBuildingNativeWorkflow(settings=settings)
     initial_state = create_initial_world_building_state(world_specification)
-    results = workflow.run(initial_state)
+
+    if detailed_logs:
+        io = WorkflowIO(settings)
+        app = workflow.compile()
+        thread_id = str(initial_state.get("thread_id") or uuid.uuid4())
+        config = {"configurable": {"thread_id": thread_id}}
+        current_state = dict(initial_state)
+
+        for event in app.stream(initial_state, config=config, stream_mode="updates"):
+            if isinstance(event, dict):
+                for node_id, updates in event.items():
+                    if isinstance(updates, dict):
+                        current_state.update(updates)
+                        io.log_node_state(
+                            int(current_state.get("iterations", 0) or 0),
+                            str(node_id),
+                            current_state,
+                        )
+                        io.log_stream_event(
+                            thread_id=thread_id,
+                            stream_mode="updates",
+                            event_type="node_update",
+                            payload={
+                                "node_id": str(node_id),
+                                "iteration": int(
+                                    current_state.get("iterations", 0) or 0
+                                ),
+                                "updates": updates,
+                            },
+                        )
+            else:
+                io.log_stream_event(
+                    thread_id=thread_id,
+                    stream_mode="updates",
+                    event_type="stream_event",
+                    payload={"event": event},
+                )
+
+        results = current_state
+    else:
+        results = workflow.run(initial_state)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = Path(settings.results_dir) / f"world_building_{timestamp}.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as handle:
         json.dump(results, handle, indent=2)
 
@@ -140,4 +193,4 @@ def run_world_main() -> None:
         "bioluminescent storms, and diplomacy between city-states is fragile. "
         "Tone: hopeful but politically tense."
     )
-    run_world_building_workflow(prompt)
+    run_world_building_workflow(prompt, detailed_logs=True)

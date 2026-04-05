@@ -1,9 +1,8 @@
 """Generic step handlers that work with any workflow configuration."""
 
 import json
-import re
-import time
 from typing import Any, Dict
+from langchain_core.runnables import RunnableLambda
 
 from core.interfaces import Step
 from core.settings import WorkflowSettings
@@ -122,17 +121,16 @@ class ToolStep(Step):
         ):
             return self._batch_scrape(tool_input, output_key)
 
-        # Execute tool with retry
+        # Execute tool with framework-level retry wrapper.
         result = None
         max_attempts = node_cfg.get("retry_attempts", 3)
-        for attempt in range(1, max_attempts + 1):
-            try:
-                result = self.tool_registry.invoke(tool_name, tool_input)
-                break
-            except Exception as exc:
-                print(f"[!] Tool attempt {attempt}/{max_attempts} failed: {exc}")
-                if attempt < max_attempts:
-                    time.sleep(1.5 * attempt)
+        tool_runnable = RunnableLambda(
+            lambda value: self.tool_registry.invoke(tool_name, value)
+        ).with_retry(stop_after_attempt=max_attempts)
+        try:
+            result = tool_runnable.invoke(tool_input)
+        except Exception as exc:
+            print(f"[!] Tool failed after {max_attempts} attempt(s): {exc}")
 
         if result is None:
             return {output_key: []}
@@ -199,16 +197,15 @@ class LLMToolStep(Step):
         if not tool_input:
             return {output_key: []}
 
-        # Execute tool with retry
+        # Execute tool with framework-level retry wrapper.
         raw_results = None
-        for attempt in range(1, 4):
-            try:
-                raw_results = self.tool_registry.invoke(tool_name, tool_input)
-                break
-            except Exception as exc:
-                print(f"[!] Tool attempt {attempt}/3 failed: {exc}")
-                if attempt < 3:
-                    time.sleep(1.5 * attempt)
+        tool_runnable = RunnableLambda(
+            lambda value: self.tool_registry.invoke(tool_name, value)
+        ).with_retry(stop_after_attempt=3)
+        try:
+            raw_results = tool_runnable.invoke(tool_input)
+        except Exception as exc:
+            print(f"[!] Tool failed after 3 attempt(s): {exc}")
 
         if not raw_results:
             return {output_key: []}
@@ -233,51 +230,3 @@ class LLMToolStep(Step):
                 return {output_key: []}
         else:
             return {output_key: raw_results}
-
-
-class StepRegistry:
-    """Registry for managing available step types."""
-
-    def __init__(self):
-        self._steps: Dict[str, type[Step]] = {}
-
-    def register(self, step_type: str, step_class: type[Step]) -> None:
-        """Register a step class."""
-        self._steps[step_type] = step_class
-
-    def create(self, step_type: str, *args, **kwargs) -> Step:
-        """Create a step instance."""
-        step_class = self._steps.get(step_type)
-        if not step_class:
-            raise ValueError(f"Step type '{step_type}' not registered")
-        return step_class(*args, **kwargs)
-
-    def is_registered(self, step_type: str) -> bool:
-        """Check if a step type is registered."""
-        return step_type in self._steps
-
-
-class StepExecutor:
-    """Generic executor that dispatches to the appropriate step handler."""
-
-    def __init__(self, step_registry: StepRegistry):
-        self.step_registry = step_registry
-
-    def execute(self, node_cfg: NodeConfig, state: GenericState) -> StateUpdate:
-        """Execute a node with the appropriate step handler."""
-        print(f"[*] Step Running: {node_cfg.get('id')} (type: {node_cfg.get('type')})")
-
-        step_type = node_cfg.get("type")
-        if not step_type:
-            raise ValueError(f"Node {node_cfg.get('id')} missing 'type'")
-
-        if not self.step_registry.is_registered(step_type):
-            raise ValueError(f"Unsupported step type: {step_type}")
-
-        # Steps are created as singletons per type during registry initialization
-        # or we dynamically create them here - this depends on design choice
-        # For now, raise error - steps should be registered during setup
-        raise NotImplementedError(
-            f"Step type '{step_type}' not configured for executor. "
-            "Register steps during orchestrator initialization."
-        )
